@@ -395,6 +395,13 @@ PHP_MINIT_FUNCTION(json_schema)
     json_schema_validator_handlers.offset = XtOffsetOf(json_schema_validator_object, std);
     json_schema_validator_handlers.free_obj = json_schema_validator_free_object;
 
+    /* Register Validator ERROR_* constants for jsonrainbow/json-schema compatibility */
+    zend_declare_class_constant_long(json_schema_validator_ce, "ERROR_NONE", sizeof("ERROR_NONE") - 1, 0x00000000);
+    zend_declare_class_constant_long(json_schema_validator_ce, "ERROR_ALL", sizeof("ERROR_ALL") - 1, 0xFFFFFFFF);
+    zend_declare_class_constant_long(json_schema_validator_ce, "ERROR_DOCUMENT_VALIDATION", sizeof("ERROR_DOCUMENT_VALIDATION") - 1, 0x00000001);
+    zend_declare_class_constant_long(json_schema_validator_ce, "ERROR_SCHEMA_VALIDATION", sizeof("ERROR_SCHEMA_VALIDATION") - 1, 0x00000002);
+    zend_declare_class_constant_string(json_schema_validator_ce, "SCHEMA_MEDIA_TYPE", sizeof("SCHEMA_MEDIA_TYPE") - 1, "application/schema+json");
+
     /* Register JsonSchema\Constraint class (constants only) */
     INIT_NS_CLASS_ENTRY(ce, "JsonSchema", "Constraint", NULL);
     json_schema_constraint_ce = zend_register_internal_class(&ce);

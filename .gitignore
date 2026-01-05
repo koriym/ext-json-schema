@@ -45,3 +45,10 @@ tests/*.sh
 # Package files
 *.tgz
 package.xml
+
+# Composer
+vendor/
+composer.lock
+
+# Test clones
+jsonrainbow-tests/

@@ -16,11 +16,11 @@ declare(strict_types=1);
  *
  * 2. jsonrainbow/json-schema + PECL extension:
  *    - Install both: composer require justinrainbow/json-schema
- *    - Include this bridge to get a Validator that extends BaseConstraint
+ *    - Include this adapter to get a Validator that extends BaseConstraint
  *      but uses the PECL extension for performance
  *
  * Example:
- *   use JsonSchema\ValidatorBridge as Validator;
+ *   use JsonSchema\ValidatorAdapter as Validator;
  *   $validator = new Validator();
  *   $validator->validate($data, $schema);
  */
@@ -31,8 +31,8 @@ namespace JsonSchema;
 // The PECL extension already provides the main \JsonSchema\Validator class
 
 if (class_exists(\JsonSchema\Constraints\BaseConstraint::class, true)) {
-    // jsonrainbow/json-schema is installed, include the bridge
-    require_once __DIR__ . '/ValidatorBridge.php';
+    // jsonrainbow/json-schema is installed, include the adapter
+    require_once __DIR__ . '/ValidatorAdapter.php';
 }
 
 // Also provide a type alias for convenience

@@ -8,14 +8,14 @@ use JsonSchema\Constraints\BaseConstraint;
 use JsonSchema\Constraints\Constraint;
 
 /**
- * PECL-accelerated JSON Schema Validator (Bridge)
+ * PECL-accelerated JSON Schema Validator (Adapter)
  *
  * This class extends the jsonrainbow/json-schema BaseConstraint to provide
  * full API compatibility while using the PECL extension for validation.
  *
  * @see https://github.com/jsonrainbow/json-schema
  */
-class Validator extends BaseConstraint
+class ValidatorAdapter extends BaseConstraint
 {
     public const ERROR_NONE = 0x00000000;
     public const ERROR_ALL = 0xFFFFFFFF;

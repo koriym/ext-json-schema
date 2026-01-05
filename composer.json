@@ -21,7 +21,7 @@
         "phpunit/phpunit": "^10.0"
     },
     "suggest": {
-        "justinrainbow/json-schema": "Required for ValidatorBridge that extends BaseConstraint"
+        "justinrainbow/json-schema": "Required for ValidatorAdapter that extends BaseConstraint"
     },
     "autoload": {
         "psr-4": {
