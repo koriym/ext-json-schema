@@ -344,17 +344,42 @@ int json_schema_coerce_type(zval *data, const char *target_type)
  * String Validation
  * ========================================================================== */
 
+/* Count UTF-8 characters (code points) in a string */
+static size_t utf8_strlen(const char *str, size_t byte_len)
+{
+    size_t char_count = 0;
+    const unsigned char *s = (const unsigned char *)str;
+    const unsigned char *end = s + byte_len;
+
+    while (s < end) {
+        if ((*s & 0x80) == 0) {
+            /* ASCII: 0xxxxxxx */
+            s++;
+        } else if ((*s & 0xE0) == 0xC0) {
+            /* 2-byte: 110xxxxx */
+            s += 2;
+        } else if ((*s & 0xF0) == 0xE0) {
+            /* 3-byte: 1110xxxx */
+            s += 3;
+        } else if ((*s & 0xF8) == 0xF0) {
+            /* 4-byte: 11110xxx */
+            s += 4;
+        } else {
+            /* Invalid UTF-8, count as single byte */
+            s++;
+        }
+        char_count++;
+    }
+    return char_count;
+}
+
 int json_schema_validate_min_length(zval *data, zend_long min_length, json_schema_context *ctx)
 {
     if (Z_TYPE_P(data) != IS_STRING) {
         return 1; /* Not applicable */
     }
 
-    size_t len = ZSTR_LEN(Z_STR_P(data));
-    /* Use multibyte length if available */
-#ifdef HAVE_MBSTRING
-    len = php_mb_strlen(ZSTR_VAL(Z_STR_P(data)), ZSTR_LEN(Z_STR_P(data)));
-#endif
+    size_t len = utf8_strlen(ZSTR_VAL(Z_STR_P(data)), ZSTR_LEN(Z_STR_P(data)));
 
     if ((zend_long)len < min_length) {
         char msg[256];
@@ -371,10 +396,7 @@ int json_schema_validate_max_length(zval *data, zend_long max_length, json_schem
         return 1;
     }
 
-    size_t len = ZSTR_LEN(Z_STR_P(data));
-#ifdef HAVE_MBSTRING
-    len = php_mb_strlen(ZSTR_VAL(Z_STR_P(data)), ZSTR_LEN(Z_STR_P(data)));
-#endif
+    size_t len = utf8_strlen(ZSTR_VAL(Z_STR_P(data)), ZSTR_LEN(Z_STR_P(data)));
 
     if ((zend_long)len > max_length) {
         char msg[256];
