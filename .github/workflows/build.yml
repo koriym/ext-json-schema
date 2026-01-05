@@ -45,7 +45,7 @@ jobs:
         id: run_demo
         run: |
           php -dextension=./modules/json_schema.so -i | grep json_schema
-          timeout 60s php -n -dextension=./modules/json_schema.so -dmemory_limit=128M -dreport_memleaks=1 -dzend.assertions=1 -dassert.exception=1 smoke.php
+          timeout 60s php -dextension=./modules/json_schema.so -dmemory_limit=128M -dreport_memleaks=1 -dzend.assertions=1 -dassert.exception=1 smoke.php
         continue-on-error: true
 
       - name: Run Valgrind memory check
@@ -61,7 +61,7 @@ jobs:
              ...
           }
           EOF
-          valgrind --suppressions=valgrind.supp --leak-check=full --show-leak-kinds=all --track-origins=yes --verbose --log-file=valgrind-out.txt php -n -dextension=./modules/json_schema.so smoke.php
+          valgrind --suppressions=valgrind.supp --leak-check=full --show-leak-kinds=all --track-origins=yes --verbose --log-file=valgrind-out.txt php -dextension=./modules/json_schema.so smoke.php
 
       - name: Check Valgrind results
         if: steps.run_tests.outcome == 'failure' || steps.run_demo.outcome == 'failure'
