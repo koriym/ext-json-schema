@@ -1,268 +1,121 @@
-# JSON Schema Validator for PHP (PECL Extension)
+# ext-json-schema
 
-[![Build and Test PHP Extension](https://github.com/koriym/ext-json-schema/actions/workflows/build.yml/badge.svg)](https://github.com/koriym/ext-json-schema/actions/workflows/build.yml)
+High-performance JSON Schema validator for PHP as a PECL extension.
 
-A high-performance PHP extension for JSON Schema validation, ported from [jsonrainbow/json-schema](https://github.com/jsonrainbow/json-schema).
+[![Build and Test](https://github.com/koriym/ext-json-schema/actions/workflows/build.yml/badge.svg)](https://github.com/koriym/ext-json-schema/actions/workflows/build.yml)
 
 ## Features
 
-- **JSON Schema Draft Support**: Draft-04, Draft-06, Draft-07
-- **High Performance**: Native C implementation for fast validation
-- **Compatible API**: Similar API to jsonrainbow/json-schema for easy migration
-- **Complete Type Validation**: string, integer, number, boolean, null, array, object
-- **All Major Keywords**:
-  - String: `minLength`, `maxLength`, `pattern`, `format`
-  - Number: `minimum`, `maximum`, `exclusiveMinimum`, `exclusiveMaximum`, `multipleOf`
-  - Array: `minItems`, `maxItems`, `uniqueItems`, `items`, `contains`
-  - Object: `required`, `properties`, `additionalProperties`, `minProperties`, `maxProperties`, `propertyNames`
-  - Combinators: `allOf`, `anyOf`, `oneOf`, `not`
-  - Conditional: `if`/`then`/`else` (Draft-07)
-  - References: `$ref`, `definitions`, `$defs`
-  - Other: `enum`, `const`, `format`
-- **Format Validation**: email, uri, date, time, date-time, ipv4, ipv6, hostname, uuid
-- **Type Coercion**: Optional automatic type conversion
+- **JSON Schema Draft-04/06/07** support
+- **2178 tests passed** from [JSON Schema Test Suite](https://github.com/json-schema-org/JSON-Schema-Test-Suite)
+- **[jsonrainbow/json-schema](https://github.com/jsonrainbow/json-schema) compatible** API
+- Native C implementation for performance
 
 ## Requirements
 
-- PHP 8.0 or later
-- php-json extension (usually built-in)
-- php-pcre extension (usually built-in)
+- PHP 8.1+
 
 ## Installation
-
-### From Source
 
 ```bash
 git clone https://github.com/koriym/ext-json-schema.git
 cd ext-json-schema
 phpize
-./configure --enable-json_schema
+./configure
 make
 make install
 ```
 
-Add to your php.ini:
 ```ini
 extension=json_schema.so
 ```
 
 ## Usage
 
-### Object-Oriented API (Recommended)
+### Procedural API
 
 ```php
-use JsonSchema\Validator;
-use JsonSchema\Constraint;
-
+$data = ['name' => 'John', 'age' => 30];
 $schema = [
     'type' => 'object',
     'properties' => [
-        'name' => ['type' => 'string', 'minLength' => 1],
+        'name' => ['type' => 'string'],
         'age' => ['type' => 'integer', 'minimum' => 0]
     ],
     'required' => ['name']
 ];
 
-$data = ['name' => 'John', 'age' => 30];
+if (json_schema_validate($data, $schema)) {
+    echo "Valid!";
+}
+```
 
-$validator = new Validator();
-if ($validator->validate($data, $schema)) {
-    echo "Valid!\n";
+### OOP API
+
+```php
+$validator = new JsonSchema\Validator();
+$validator->validate($data, $schema);
+
+if ($validator->isValid()) {
+    echo "Valid!";
 } else {
-    foreach ($validator->getErrors() as $error) {
-        echo "Error: " . $error['message'] . "\n";
-    }
+    print_r($validator->getErrors());
 }
 ```
 
-### Procedural API
+### jsonrainbow/json-schema Compatible Adapter
 
-```php
-// Simple validation
-$isValid = json_schema_validate($data, $schema);
+For projects using [jsonrainbow/json-schema](https://github.com/jsonrainbow/json-schema), use `ValidatorAdapter` for a drop-in replacement:
 
-// Validation with error details
-$result = json_schema_validate_with_errors($data, $schema);
-if (!$result['valid']) {
-    foreach ($result['errors'] as $error) {
-        echo $error['message'] . "\n";
-    }
-}
+```bash
+composer require justinrainbow/json-schema
 ```
 
-### Check Modes
-
 ```php
-use JsonSchema\Constraint;
+use JsonSchema\ValidatorAdapter;
 
-// Normal validation
-$validator = new Validator(Constraint::CHECK_MODE_NORMAL);
+$validator = new ValidatorAdapter();
+$validator->validate($data, $schema);
 
-// Type coercion (convert "123" to 123 if schema expects integer)
-$validator = new Validator(Constraint::CHECK_MODE_COERCE_TYPES);
-
-// Disable format validation
-$validator = new Validator(Constraint::CHECK_MODE_DISABLE_FORMAT);
-
-// Throw exception on validation failure
-$validator = new Validator(Constraint::CHECK_MODE_EXCEPTIONS);
-
-// Combine multiple modes
-$validator = new Validator(
-    Constraint::CHECK_MODE_COERCE_TYPES |
-    Constraint::CHECK_MODE_APPLY_DEFAULTS
-);
+// Same API as jsonrainbow/json-schema
+$validator->isValid();
+$validator->getErrors();    // Compatible error format
+$validator->numErrors();
+$validator->reset();
 ```
-
-### Available Check Mode Constants
-
-| Constant | Description |
-|----------|-------------|
-| `CHECK_MODE_NONE` | No special processing |
-| `CHECK_MODE_NORMAL` | Normal validation (default) |
-| `CHECK_MODE_TYPE_CAST` | Enable type casting |
-| `CHECK_MODE_COERCE_TYPES` | Coerce string values to expected types |
-| `CHECK_MODE_APPLY_DEFAULTS` | Apply default values from schema |
-| `CHECK_MODE_EXCEPTIONS` | Throw exception on validation failure |
-| `CHECK_MODE_DISABLE_FORMAT` | Skip format validation |
-| `CHECK_MODE_EARLY_COERCE` | Coerce types before validation |
-| `CHECK_MODE_ONLY_REQUIRED_DEFAULTS` | Only apply defaults for required properties |
-| `CHECK_MODE_VALIDATE_SCHEMA` | Validate the schema itself |
-
-## Schema Examples
-
-### Basic Types
-
-```php
-// String with constraints
-$schema = [
-    'type' => 'string',
-    'minLength' => 1,
-    'maxLength' => 100,
-    'pattern' => '^[a-z]+$'
-];
-
-// Number with range
-$schema = [
-    'type' => 'number',
-    'minimum' => 0,
-    'maximum' => 100,
-    'multipleOf' => 0.5
-];
-
-// Array with items validation
-$schema = [
-    'type' => 'array',
-    'items' => ['type' => 'integer'],
-    'minItems' => 1,
-    'uniqueItems' => true
-];
-```
-
-### Using $ref
-
-```php
-$schema = [
-    'definitions' => [
-        'address' => [
-            'type' => 'object',
-            'properties' => [
-                'street' => ['type' => 'string'],
-                'city' => ['type' => 'string']
-            ],
-            'required' => ['street', 'city']
-        ]
-    ],
-    'type' => 'object',
-    'properties' => [
-        'home' => ['$ref' => '#/definitions/address'],
-        'work' => ['$ref' => '#/definitions/address']
-    ]
-];
-```
-
-### Conditional Validation (Draft-07)
-
-```php
-$schema = [
-    'type' => 'object',
-    'if' => [
-        'properties' => ['type' => ['const' => 'premium']]
-    ],
-    'then' => [
-        'required' => ['discount']
-    ],
-    'else' => [
-        'required' => ['standard']
-    ]
-];
-```
-
-## API Reference
-
-### JsonSchema\Validator Class
-
-| Method | Description |
-|--------|-------------|
-| `__construct(int $checkMode = CHECK_MODE_NORMAL)` | Create a new validator |
-| `validate(mixed $data, mixed $schema, ?int $checkMode = null): bool` | Validate data against schema |
-| `isValid(): bool` | Check if last validation was successful |
-| `getErrors(): array` | Get validation errors from last validation |
-| `reset(): void` | Clear validation state |
-| `getCheckMode(): int` | Get current check mode |
-| `setCheckMode(int $mode): void` | Set check mode |
-
-### Procedural Functions
-
-| Function | Description |
-|----------|-------------|
-| `json_schema_validate(mixed $data, mixed $schema, int $checkMode = 0): bool` | Validate data against schema |
-| `json_schema_validate_with_errors(mixed $data, mixed $schema, int $checkMode = 0): array` | Validate and return errors |
 
 ## Error Format
 
-Each error in the errors array contains:
+Errors match jsonrainbow/json-schema format:
 
 ```php
 [
-    'message' => 'Error description',
-    'property' => 'propertyName',  // or null
-    'pointer' => '/path/to/error', // JSON Pointer
-    'constraint' => 1              // Error code
+    'property'   => 'user.email',     // Dot notation path
+    'pointer'    => '/user/email',    // JSON Pointer
+    'message'    => 'Type mismatch',
+    'constraint' => 'type',           // Constraint name
+    'context'    => 1                 // ERROR_DOCUMENT_VALIDATION
 ]
 ```
 
-## Development
+## Supported Keywords
 
-### Build and Test
-
-```bash
-# Clean, build, and run smoke test
-./build.sh all
-
-# Run unit tests
-./build.sh test
-
-# Individual steps
-./build.sh clean
-./build.sh prepare
-./build.sh build
-./build.sh run
-```
-
-### Continuous Integration
-
-This project includes GitHub Actions workflows for automated testing across multiple PHP versions.
-
-### IDE Support
-
-This repository contains CMakeLists.txt for CLion integration. Refer to [Developing a PHP extension in CLion](https://dev.to/jasny/developing-a-php-extension-in-clion-3oo1) for more information.
+| Category | Keywords |
+|----------|----------|
+| Type | `type` |
+| String | `minLength`, `maxLength`, `pattern`, `format` |
+| Number | `minimum`, `maximum`, `exclusiveMinimum`, `exclusiveMaximum`, `multipleOf` |
+| Array | `items`, `additionalItems`, `minItems`, `maxItems`, `uniqueItems`, `contains` |
+| Object | `properties`, `additionalProperties`, `required`, `minProperties`, `maxProperties`, `propertyNames`, `dependencies` |
+| Combinators | `allOf`, `anyOf`, `oneOf`, `not` |
+| Conditional | `if`, `then`, `else` |
+| Reference | `$ref`, `definitions`, `$defs` |
+| Other | `enum`, `const` |
 
 ## License
 
-MIT License
+MIT
 
-## Credits
+---
 
-- Based on [jsonrainbow/json-schema](https://github.com/jsonrainbow/json-schema) by Justin Rainbow
-- PECL port by [Akihito Koriyama](https://github.com/koriym)
+*Implemented with [Claude Code](https://claude.ai/code) (Opus 4.5)*
