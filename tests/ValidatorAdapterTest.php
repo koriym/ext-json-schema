@@ -92,6 +92,128 @@ class ValidatorAdapterTest extends TestCase
         $this->assertArrayHasKey('message', $errors[0]);
     }
 
+    /**
+     * Test error format matches jsonrainbow/json-schema format
+     * Error should have: property (string), pointer (string), message (string), constraint (string), context (int)
+     */
+    public function testErrorFormatMatchesJsonrainbow(): void
+    {
+        $validator = new $this->validatorClass();
+        $data = json_decode('{"name": 123}');
+        $schema = json_decode('{"type": "object", "properties": {"name": {"type": "string"}}}');
+
+        $validator->validate($data, $schema);
+        $errors = $validator->getErrors();
+
+        $this->assertNotEmpty($errors);
+        $error = $errors[0];
+
+        // All required keys must be present
+        $this->assertArrayHasKey('property', $error, 'Error must have "property" key');
+        $this->assertArrayHasKey('pointer', $error, 'Error must have "pointer" key');
+        $this->assertArrayHasKey('message', $error, 'Error must have "message" key');
+        $this->assertArrayHasKey('constraint', $error, 'Error must have "constraint" key');
+        $this->assertArrayHasKey('context', $error, 'Error must have "context" key');
+    }
+
+    public function testErrorPropertyIsNonEmptyString(): void
+    {
+        $validator = new $this->validatorClass();
+        $data = json_decode('{"name": 123}');
+        $schema = json_decode('{"type": "object", "properties": {"name": {"type": "string"}}}');
+
+        $validator->validate($data, $schema);
+        $errors = $validator->getErrors();
+        $error = $errors[0];
+
+        // property should be "name" (dot notation property path)
+        $this->assertIsString($error['property']);
+        $this->assertNotEmpty($error['property'], 'Property path should not be empty');
+        $this->assertEquals('name', $error['property']);
+    }
+
+    public function testErrorConstraintIsString(): void
+    {
+        $validator = new $this->validatorClass();
+        $data = json_decode('{"name": 123}');
+        $schema = json_decode('{"type": "object", "properties": {"name": {"type": "string"}}}');
+
+        $validator->validate($data, $schema);
+        $errors = $validator->getErrors();
+        $error = $errors[0];
+
+        // constraint should be a string like "type", not an integer
+        $this->assertIsString($error['constraint'], 'Constraint should be a string, not integer');
+        $this->assertEquals('type', $error['constraint']);
+    }
+
+    public function testErrorPointerIsJsonPointer(): void
+    {
+        $validator = new $this->validatorClass();
+        $data = json_decode('{"name": 123}');
+        $schema = json_decode('{"type": "object", "properties": {"name": {"type": "string"}}}');
+
+        $validator->validate($data, $schema);
+        $errors = $validator->getErrors();
+        $error = $errors[0];
+
+        // pointer should be "/name" (JSON pointer format)
+        $this->assertIsString($error['pointer']);
+        $this->assertEquals('/name', $error['pointer']);
+    }
+
+    public function testErrorContextIsInteger(): void
+    {
+        $validator = new $this->validatorClass();
+        $data = json_decode('{"name": 123}');
+        $schema = json_decode('{"type": "object", "properties": {"name": {"type": "string"}}}');
+
+        $validator->validate($data, $schema);
+        $errors = $validator->getErrors();
+        $error = $errors[0];
+
+        // context should be ERROR_DOCUMENT_VALIDATION = 1
+        $this->assertIsInt($error['context']);
+        $this->assertEquals(1, $error['context']);
+    }
+
+    public function testNestedPropertyErrorFormat(): void
+    {
+        $validator = new $this->validatorClass();
+        $data = json_decode('{"user": {"email": 123}}');
+        $schema = json_decode('{"type": "object", "properties": {"user": {"type": "object", "properties": {"email": {"type": "string"}}}}}');
+
+        $validator->validate($data, $schema);
+        $errors = $validator->getErrors();
+
+        $this->assertNotEmpty($errors);
+        $error = $errors[0];
+
+        // property should be "user.email" (dot notation)
+        $this->assertEquals('user.email', $error['property']);
+        // pointer should be "/user/email" (JSON pointer)
+        $this->assertEquals('/user/email', $error['pointer']);
+        // constraint should be "type"
+        $this->assertEquals('type', $error['constraint']);
+    }
+
+    public function testRequiredErrorFormat(): void
+    {
+        $validator = new $this->validatorClass();
+        $data = json_decode('{}');
+        $schema = json_decode('{"type": "object", "required": ["name"]}');
+
+        $validator->validate($data, $schema);
+        $errors = $validator->getErrors();
+
+        $this->assertNotEmpty($errors);
+        $error = $errors[0];
+
+        // constraint should be "required"
+        $this->assertIsString($error['constraint']);
+        $this->assertEquals('required', $error['constraint']);
+    }
+
     public function testNumErrorsReturnsCount(): void
     {
         $validator = new $this->validatorClass();

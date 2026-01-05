@@ -14,6 +14,7 @@
 #include "ext/json/php_json.h"
 #include "zend_exceptions.h"
 #include "zend_interfaces.h"
+#include "zend_smart_str.h"
 #include "php_json_schema.h"
 #include "validator.h"
 
@@ -65,6 +66,68 @@ static void json_schema_validator_free_object(zend_object *obj)
     zend_object_std_dtor(&intern->std);
 }
 
+/* Map error code to constraint name string (jsonrainbow compatible) */
+static const char *get_constraint_name(int constraint)
+{
+    switch (constraint) {
+        case JSON_SCHEMA_ERROR_TYPE_MISMATCH: return "type";
+        case JSON_SCHEMA_ERROR_MIN_LENGTH: return "minLength";
+        case JSON_SCHEMA_ERROR_MAX_LENGTH: return "maxLength";
+        case JSON_SCHEMA_ERROR_PATTERN_MISMATCH: return "pattern";
+        case JSON_SCHEMA_ERROR_MINIMUM: return "minimum";
+        case JSON_SCHEMA_ERROR_MAXIMUM: return "maximum";
+        case JSON_SCHEMA_ERROR_EXCLUSIVE_MINIMUM: return "exclusiveMinimum";
+        case JSON_SCHEMA_ERROR_EXCLUSIVE_MAXIMUM: return "exclusiveMaximum";
+        case JSON_SCHEMA_ERROR_MULTIPLE_OF: return "multipleOf";
+        case JSON_SCHEMA_ERROR_MIN_ITEMS: return "minItems";
+        case JSON_SCHEMA_ERROR_MAX_ITEMS: return "maxItems";
+        case JSON_SCHEMA_ERROR_UNIQUE_ITEMS: return "uniqueItems";
+        case JSON_SCHEMA_ERROR_CONTAINS: return "contains";
+        case JSON_SCHEMA_ERROR_MIN_PROPERTIES: return "minProperties";
+        case JSON_SCHEMA_ERROR_MAX_PROPERTIES: return "maxProperties";
+        case JSON_SCHEMA_ERROR_REQUIRED_PROPERTY: return "required";
+        case JSON_SCHEMA_ERROR_ADDITIONAL_PROPERTIES: return "additionalProperties";
+        case JSON_SCHEMA_ERROR_PROPERTY_NAMES: return "propertyNames";
+        case JSON_SCHEMA_ERROR_ENUM_MISMATCH: return "enum";
+        case JSON_SCHEMA_ERROR_CONST_MISMATCH: return "const";
+        case JSON_SCHEMA_ERROR_FORMAT: return "format";
+        case JSON_SCHEMA_ERROR_ALL_OF: return "allOf";
+        case JSON_SCHEMA_ERROR_ANY_OF: return "anyOf";
+        case JSON_SCHEMA_ERROR_ONE_OF: return "oneOf";
+        case JSON_SCHEMA_ERROR_NOT: return "not";
+        case JSON_SCHEMA_ERROR_IF_THEN_ELSE: return "if";
+        case JSON_SCHEMA_ERROR_REF: return "$ref";
+        default: return "unknown";
+    }
+}
+
+/* Convert pointer path to property path (jsonrainbow compatible) */
+static zend_string *pointer_to_property(zend_string *pointer)
+{
+    if (!pointer || ZSTR_LEN(pointer) == 0) {
+        return zend_string_init("", 0, 0);
+    }
+
+    /* Convert /foo/bar to foo.bar */
+    smart_str result = {0};
+    const char *p = ZSTR_VAL(pointer);
+
+    /* Skip leading slash */
+    if (*p == '/') p++;
+
+    while (*p) {
+        if (*p == '/') {
+            smart_str_appendc(&result, '.');
+        } else {
+            smart_str_appendc(&result, *p);
+        }
+        p++;
+    }
+
+    smart_str_0(&result);
+    return smart_str_extract(&result);
+}
+
 /* Convert validation errors to PHP array */
 static void errors_to_array(json_schema_context *ctx, zval *errors_array)
 {
@@ -74,21 +137,25 @@ static void errors_to_array(json_schema_context *ctx, zval *errors_array)
         zval error_obj;
         array_init(&error_obj);
 
-        add_assoc_str(&error_obj, "message", zend_string_copy(error->message));
+        /* property: convert pointer to property path (foo.bar format) */
+        zend_string *property = pointer_to_property(error->pointer);
+        add_assoc_str(&error_obj, "property", property);
 
-        if (error->property) {
-            add_assoc_str(&error_obj, "property", zend_string_copy(error->property));
-        } else {
-            add_assoc_null(&error_obj, "property");
-        }
-
+        /* pointer: JSON pointer format (/foo/bar) */
         if (error->pointer) {
             add_assoc_str(&error_obj, "pointer", zend_string_copy(error->pointer));
         } else {
             add_assoc_string(&error_obj, "pointer", "");
         }
 
-        add_assoc_long(&error_obj, "constraint", error->constraint);
+        /* message */
+        add_assoc_str(&error_obj, "message", zend_string_copy(error->message));
+
+        /* constraint: string name (jsonrainbow compatible) */
+        add_assoc_string(&error_obj, "constraint", get_constraint_name(error->constraint));
+
+        /* context: ERROR_DOCUMENT_VALIDATION = 1 */
+        add_assoc_long(&error_obj, "context", 1);
 
         add_next_index_zval(errors_array, &error_obj);
         error = error->next;
