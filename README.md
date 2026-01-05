@@ -1,84 +1,268 @@
-# A PECL project skeleton
+# JSON Schema Validator for PHP (PECL Extension)
 
-[![Build and Test PHP Extension](https://github.com/koriym/ext-helloworld/actions/workflows/build.yml/badge.svg)](https://github.com/koriym/ext-helloworld/actions/workflows/build.yml)
+[![Build and Test PHP Extension](https://github.com/koriym/ext-json-schema/actions/workflows/build.yml/badge.svg)](https://github.com/koriym/ext-json-schema/actions/workflows/build.yml)
 
-## HelloWorld PHP Extension
+A high-performance PHP extension for JSON Schema validation, ported from [jsonrainbow/json-schema](https://github.com/jsonrainbow/json-schema).
 
-A simple PHP extension that demonstrates basic "Hello World" functionality.
+## Features
 
-## Run
+- **JSON Schema Draft Support**: Draft-04, Draft-06, Draft-07
+- **High Performance**: Native C implementation for fast validation
+- **Compatible API**: Similar API to jsonrainbow/json-schema for easy migration
+- **Complete Type Validation**: string, integer, number, boolean, null, array, object
+- **All Major Keywords**:
+  - String: `minLength`, `maxLength`, `pattern`, `format`
+  - Number: `minimum`, `maximum`, `exclusiveMinimum`, `exclusiveMaximum`, `multipleOf`
+  - Array: `minItems`, `maxItems`, `uniqueItems`, `items`, `contains`
+  - Object: `required`, `properties`, `additionalProperties`, `minProperties`, `maxProperties`, `propertyNames`
+  - Combinators: `allOf`, `anyOf`, `oneOf`, `not`
+  - Conditional: `if`/`then`/`else` (Draft-07)
+  - References: `$ref`, `definitions`, `$defs`
+  - Other: `enum`, `const`, `format`
+- **Format Validation**: email, uri, date, time, date-time, ipv4, ipv6, hostname, uuid
+- **Type Coercion**: Optional automatic type conversion
 
-1. Compile the extension:
+## Requirements
 
-    ```
-    phpize
-    ./configure
-    make
-    ```
+- PHP 8.0 or later
+- php-json extension (usually built-in)
+- php-pcre extension (usually built-in)
 
-2. Run
+## Installation
 
-    ```
-    % php -d extension=./modules/helloworld.so -i | grep hello
+### From Source
 
-    helloworld
-    helloworld support => enabled
+```bash
+git clone https://github.com/koriym/ext-json-schema.git
+cd ext-json-schema
+phpize
+./configure --enable-json_schema
+make
+make install
+```
 
-    % php -d extension=./modules/helloworld.so smoke.php
-    Hello World!
-   ```
+Add to your php.ini:
+```ini
+extension=json_schema.so
+```
 
-### Basic Function
+## Usage
+
+### Object-Oriented API (Recommended)
 
 ```php
-<?php
-helloworld();
-// Output: Hello World!
+use JsonSchema\Validator;
+use JsonSchema\Constraint;
+
+$schema = [
+    'type' => 'object',
+    'properties' => [
+        'name' => ['type' => 'string', 'minLength' => 1],
+        'age' => ['type' => 'integer', 'minimum' => 0]
+    ],
+    'required' => ['name']
+];
+
+$data = ['name' => 'John', 'age' => 30];
+
+$validator = new Validator();
+if ($validator->validate($data, $schema)) {
+    echo "Valid!\n";
+} else {
+    foreach ($validator->getErrors() as $error) {
+        echo "Error: " . $error['message'] . "\n";
+    }
+}
 ```
 
-# Getting started with development
+### Procedural API
 
-This guide is intended to help complete beginners with no knowledge or experience of C or PECL to take their first steps.
+```php
+// Simple validation
+$isValid = json_schema_validate($data, $schema);
 
-## Edit, Build and Run
-
-After cloning, edit `hellworld.c` to change the message.
-
-```c
-php_printf("Hello World!\n");
+// Validation with error details
+$result = json_schema_validate_with_errors($data, $schema);
+if (!$result['valid']) {
+    foreach ($result['errors'] as $error) {
+        echo $error['message'] . "\n";
+    }
+}
 ```
 
-Next, compile to build.
+### Check Modes
 
+```php
+use JsonSchema\Constraint;
+
+// Normal validation
+$validator = new Validator(Constraint::CHECK_MODE_NORMAL);
+
+// Type coercion (convert "123" to 123 if schema expects integer)
+$validator = new Validator(Constraint::CHECK_MODE_COERCE_TYPES);
+
+// Disable format validation
+$validator = new Validator(Constraint::CHECK_MODE_DISABLE_FORMAT);
+
+// Throw exception on validation failure
+$validator = new Validator(Constraint::CHECK_MODE_EXCEPTIONS);
+
+// Combine multiple modes
+$validator = new Validator(
+    Constraint::CHECK_MODE_COERCE_TYPES |
+    Constraint::CHECK_MODE_APPLY_DEFAULTS
+);
 ```
-phpize
-./configure
-make
+
+### Available Check Mode Constants
+
+| Constant | Description |
+|----------|-------------|
+| `CHECK_MODE_NONE` | No special processing |
+| `CHECK_MODE_NORMAL` | Normal validation (default) |
+| `CHECK_MODE_TYPE_CAST` | Enable type casting |
+| `CHECK_MODE_COERCE_TYPES` | Coerce string values to expected types |
+| `CHECK_MODE_APPLY_DEFAULTS` | Apply default values from schema |
+| `CHECK_MODE_EXCEPTIONS` | Throw exception on validation failure |
+| `CHECK_MODE_DISABLE_FORMAT` | Skip format validation |
+| `CHECK_MODE_EARLY_COERCE` | Coerce types before validation |
+| `CHECK_MODE_ONLY_REQUIRED_DEFAULTS` | Only apply defaults for required properties |
+| `CHECK_MODE_VALIDATE_SCHEMA` | Validate the schema itself |
+
+## Schema Examples
+
+### Basic Types
+
+```php
+// String with constraints
+$schema = [
+    'type' => 'string',
+    'minLength' => 1,
+    'maxLength' => 100,
+    'pattern' => '^[a-z]+$'
+];
+
+// Number with range
+$schema = [
+    'type' => 'number',
+    'minimum' => 0,
+    'maximum' => 100,
+    'multipleOf' => 0.5
+];
+
+// Array with items validation
+$schema = [
+    'type' => 'array',
+    'items' => ['type' => 'integer'],
+    'minItems' => 1,
+    'uniqueItems' => true
+];
 ```
 
-This will create `modules/helloworld.so`. Now let's give it a try!
+### Using $ref
 
+```php
+$schema = [
+    'definitions' => [
+        'address' => [
+            'type' => 'object',
+            'properties' => [
+                'street' => ['type' => 'string'],
+                'city' => ['type' => 'string']
+            ],
+            'required' => ['street', 'city']
+        ]
+    ],
+    'type' => 'object',
+    'properties' => [
+        'home' => ['$ref' => '#/definitions/address'],
+        'work' => ['$ref' => '#/definitions/address']
+    ]
+];
 ```
-php -d extension=./modules/helloworld.so smoke.php
+
+### Conditional Validation (Draft-07)
+
+```php
+$schema = [
+    'type' => 'object',
+    'if' => [
+        'properties' => ['type' => ['const' => 'premium']]
+    ],
+    'then' => [
+        'required' => ['discount']
+    ],
+    'else' => [
+        'required' => ['standard']
+    ]
+];
 ```
 
-When your message is displayed in the hellworld() function, you are done!🎉
+## API Reference
 
-## What next?
+### JsonSchema\Validator Class
 
-Change the two strings `helloworld` and `HELLOWORLD` to suit your project. Change the function names too.
+| Method | Description |
+|--------|-------------|
+| `__construct(int $checkMode = CHECK_MODE_NORMAL)` | Create a new validator |
+| `validate(mixed $data, mixed $schema, ?int $checkMode = null): bool` | Validate data against schema |
+| `isValid(): bool` | Check if last validation was successful |
+| `getErrors(): array` | Get validation errors from last validation |
+| `reset(): void` | Clear validation state |
+| `getCheckMode(): int` | Get current check mode |
+| `setCheckMode(int $mode): void` | Set check mode |
 
-The world of PECL development is vast and there is a lot to learn, but if you can get past the environment building barrier, you are already one step ahead.
-Take on the challenge of PECL development from here onwards!
+### Procedural Functions
 
-## Continuous Integration
+| Function | Description |
+|----------|-------------|
+| `json_schema_validate(mixed $data, mixed $schema, int $checkMode = 0): bool` | Validate data against schema |
+| `json_schema_validate_with_errors(mixed $data, mixed $schema, int $checkMode = 0): array` | Validate and return errors |
 
-This project contains a GitHub action workflow file.
-Make sure the project is built successfully by ushing it; CI also installs Valgrind and checks for memory leaks.
+## Error Format
 
-## IDE
+Each error in the errors array contains:
 
-This repository contains CmakeLists.txt, which Clion needs to understand the source code.
-Development using an IDE is efficient and allows for debugging, including a backtrace.
+```php
+[
+    'message' => 'Error description',
+    'property' => 'propertyName',  // or null
+    'pointer' => '/path/to/error', // JSON Pointer
+    'constraint' => 1              // Error code
+]
+```
 
-Refer to [Developing a PHP extension in CLion](https://dev.to/jasny/developing-a-php-extension-in-clion-3oo1) for more information.
+## Development
+
+### Build and Test
+
+```bash
+# Clean, build, and run smoke test
+./build.sh all
+
+# Run unit tests
+./build.sh test
+
+# Individual steps
+./build.sh clean
+./build.sh prepare
+./build.sh build
+./build.sh run
+```
+
+### Continuous Integration
+
+This project includes GitHub Actions workflows for automated testing across multiple PHP versions.
+
+### IDE Support
+
+This repository contains CMakeLists.txt for CLion integration. Refer to [Developing a PHP extension in CLion](https://dev.to/jasny/developing-a-php-extension-in-clion-3oo1) for more information.
+
+## License
+
+MIT License
+
+## Credits
+
+- Based on [jsonrainbow/json-schema](https://github.com/jsonrainbow/json-schema) by Justin Rainbow
+- PECL port by [Akihito Koriyama](https://github.com/koriym)
