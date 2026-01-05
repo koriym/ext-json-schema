@@ -281,6 +281,31 @@ PHP_FUNCTION(json_schema_validate_with_errors)
 }
 /* }}} */
 
+/* {{{ proto array json_schema_get_errors(mixed $data, mixed $schema, int $checkMode = 0)
+   Validates data against a JSON Schema and returns only the errors array */
+PHP_FUNCTION(json_schema_get_errors)
+{
+    zval *data;
+    zval *schema;
+    zend_long check_mode = JSON_SCHEMA_CHECK_MODE_NORMAL;
+
+    ZEND_PARSE_PARAMETERS_START(2, 3)
+        Z_PARAM_ZVAL(data)
+        Z_PARAM_ZVAL(schema)
+        Z_PARAM_OPTIONAL
+        Z_PARAM_LONG(check_mode)
+    ZEND_PARSE_PARAMETERS_END();
+
+    json_schema_context *ctx = json_schema_context_create((int)check_mode);
+    json_schema_validate(data, schema, ctx);
+
+    array_init(return_value);
+    errors_to_array(ctx, return_value);
+
+    json_schema_context_free(ctx);
+}
+/* }}} */
+
 /* ============================================================================
  * Argument Info Definitions
  * ========================================================================== */
@@ -324,6 +349,12 @@ ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(arginfo_json_schema_validate_with_errors
     ZEND_ARG_TYPE_INFO_WITH_DEFAULT_VALUE(0, checkMode, IS_LONG, 0, "0")
 ZEND_END_ARG_INFO()
 
+ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(arginfo_json_schema_get_errors, 0, 2, IS_ARRAY, 0)
+    ZEND_ARG_TYPE_INFO(0, data, IS_MIXED, 0)
+    ZEND_ARG_TYPE_INFO(0, schema, IS_MIXED, 0)
+    ZEND_ARG_TYPE_INFO_WITH_DEFAULT_VALUE(0, checkMode, IS_LONG, 0, "0")
+ZEND_END_ARG_INFO()
+
 /* ============================================================================
  * Method Entries
  * ========================================================================== */
@@ -346,6 +377,7 @@ static const zend_function_entry json_schema_validator_methods[] = {
 static const zend_function_entry json_schema_functions[] = {
     PHP_FE(json_schema_validate, arginfo_json_schema_validate)
     PHP_FE(json_schema_validate_with_errors, arginfo_json_schema_validate_with_errors)
+    PHP_FE(json_schema_get_errors, arginfo_json_schema_get_errors)
     PHP_FE_END
 };
 

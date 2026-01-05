@@ -1,0 +1,48 @@
+{
+    "name": "ext-json-schema/json-schema-bridge",
+    "description": "Bridge layer for using PECL json_schema extension with jsonrainbow/json-schema API compatibility",
+    "type": "library",
+    "license": "MIT",
+    "keywords": ["json", "schema", "validator", "pecl", "json-schema", "bridge"],
+    "homepage": "https://github.com/koriym/ext-json-schema",
+    "authors": [
+        {
+            "name": "BEAR.Sunday Project",
+            "email": "koriym@gmail.com"
+        }
+    ],
+    "require": {
+        "php": ">=8.1",
+        "ext-json": "*",
+        "ext-json_schema": "*"
+    },
+    "require-dev": {
+        "justinrainbow/json-schema": "^5.2",
+        "phpunit/phpunit": "^10.0"
+    },
+    "suggest": {
+        "justinrainbow/json-schema": "Required for ValidatorBridge that extends BaseConstraint"
+    },
+    "autoload": {
+        "psr-4": {
+            "JsonSchema\\": "src/JsonSchema/"
+        }
+    },
+    "autoload-dev": {
+        "psr-4": {
+            "JsonSchema\\Tests\\": "tests/"
+        }
+    },
+    "config": {
+        "sort-packages": true
+    },
+    "scripts": {
+        "test": "phpunit",
+        "test-suite": "php run_test_suite.php"
+    },
+    "extra": {
+        "branch-alias": {
+            "dev-main": "1.0.x-dev"
+        }
+    }
+}
