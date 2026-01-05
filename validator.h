@@ -58,6 +58,7 @@ int json_schema_validate_required(zval *data, zval *required, json_schema_contex
 int json_schema_validate_additional_properties(zval *data, zval *schema, zval *additional, json_schema_context *ctx);
 int json_schema_validate_property_names(zval *data, zval *property_names_schema, json_schema_context *ctx);
 int json_schema_validate_contains(zval *data, zval *contains_schema, json_schema_context *ctx);
+int json_schema_validate_dependencies(zval *data, zval *dependencies, json_schema_context *ctx);
 
 /* Combinators */
 int json_schema_validate_all_of(zval *data, zval *schemas, json_schema_context *ctx);
