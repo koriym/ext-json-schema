@@ -34,14 +34,6 @@ include_directories(${PHP_SOURCE}/TSRM)
 include_directories(${PHP_SOURCE}/ext)
 include_directories(${PROJECT_SOURCE_DIR})
 
-# Add a custom target `configure`
-# Execute `phpize` and `./configure`, and make it depend on source files
-# link https://cmake.org/cmake/help/latest/command/add_custom_target.html
-add_custom_target(configure
-        COMMAND phpize && ./configure --enable-json_schema
-        DEPENDS ${SOURCE_FILES}
-        WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
-
 # Specify the list of source files
 # link https://cmake.org/cmake/help/latest/command/set.html
 set(SOURCE_FILES
@@ -50,6 +42,14 @@ set(SOURCE_FILES
     json_schema.c
     validator.c
 )
+
+# Add a custom target `configure`
+# Execute `phpize` and `./configure`, and make it depend on source files
+# link https://cmake.org/cmake/help/latest/command/add_custom_target.html
+add_custom_target(configure
+        COMMAND phpize && ./configure --enable-json_schema
+        DEPENDS ${SOURCE_FILES}
+        WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
 
 # Create a library from source files (but exclude from ALL build)
 # link https://cmake.org/cmake/help/latest/command/add_library.html
