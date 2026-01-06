@@ -78,8 +78,8 @@ $skippedTests = 0;
 $failures = [];
 
 /**
- * Convert stdClass objects to arrays recursively for schema
- * but preserve the distinction for data
+ * Convert stdClass objects to arrays recursively for schema.
+ * Note: Data objects are kept as-is to preserve object/array distinction.
  */
 function schemaToArray($schema) {
     if (is_object($schema)) {
