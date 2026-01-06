@@ -4,11 +4,11 @@ cmake_minimum_required(VERSION 3.8)
 
 # Specify the project name and language used
 # link https://cmake.org/cmake/help/latest/command/project.html
-project(helloworld C)
+project(json_schema C)
 
 # Specify symbols to be defined during compilation
 # link https://cmake.org/cmake/help/latest/command/add_compile_definitions.html
-add_compile_definitions(HAVE_HELLOWORLD)
+add_compile_definitions(HAVE_JSON_SCHEMA)
 
 # Use the `php-config` command to get PHP's include directory
 # link https://cmake.org/cmake/help/latest/command/execute_process.html
@@ -31,23 +31,29 @@ include_directories(${PHP_SOURCE})
 include_directories(${PHP_SOURCE}/main)
 include_directories(${PHP_SOURCE}/Zend)
 include_directories(${PHP_SOURCE}/TSRM)
+include_directories(${PHP_SOURCE}/ext)
 include_directories(${PROJECT_SOURCE_DIR})
+
+# Specify the list of source files
+# link https://cmake.org/cmake/help/latest/command/set.html
+set(SOURCE_FILES
+    php_json_schema.h
+    validator.h
+    json_schema.c
+    validator.c
+)
 
 # Add a custom target `configure`
 # Execute `phpize` and `./configure`, and make it depend on source files
 # link https://cmake.org/cmake/help/latest/command/add_custom_target.html
 add_custom_target(configure
-        COMMAND phpize && ./configure
+        COMMAND phpize && ./configure --enable-json_schema
         DEPENDS ${SOURCE_FILES}
         WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
 
-# Specify the list of source files
-# link https://cmake.org/cmake/help/latest/command/set.html
-set(SOURCE_FILES php_helloworld.h helloworld.c)
-
 # Create a library from source files (but exclude from ALL build)
 # link https://cmake.org/cmake/help/latest/command/add_library.html
-add_library(___ EXCLUDE_FROM_ALL ${SOURCE_FILES})
+add_library(json_schema_lib EXCLUDE_FROM_ALL ${SOURCE_FILES})
 
 # Set the behavior of CMake's CMP0115 policy. The new policy executes add_executable() or add_library()
 # even if source files don't exist, but generates an error if the generated build can't find those files.

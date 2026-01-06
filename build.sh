@@ -2,14 +2,14 @@
 
 clean() {
     echo "Cleaning..."
-    make clean
+    make clean 2>/dev/null
     phpize --clean
 }
 
 prepare() {
     echo "Preparing..."
     phpize
-    ./configure
+    ./configure --enable-json_schema
 }
 
 build() {
@@ -22,9 +22,14 @@ install() {
     make install
 }
 
+test() {
+    echo "Running tests..."
+    make test TESTS=tests/
+}
+
 run() {
     echo "Run..."
-    php -dextension=modules/helloworld.so -ddisplay_errors=1 smoke.php
+    php -dextension=modules/json_schema.so -ddisplay_errors=1 smoke.php
 }
 
 case $1 in
@@ -40,6 +45,9 @@ case $1 in
     install)
         install
         ;;
+    test)
+        test
+        ;;
     run)
         run
         ;;
@@ -50,7 +58,7 @@ case $1 in
         run
         ;;
     *)
-        echo "Usage: $0 {clean|prepare|build|install|run|all}"
+        echo "Usage: $0 {clean|prepare|build|install|test|run|all}"
         exit 1
         ;;
 esac

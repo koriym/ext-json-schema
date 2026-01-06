@@ -1,9 +1,9 @@
 // vim:ft=javascript
 
-ARG_ENABLE("helloworld", "enable helloworld", "no");
+ARG_ENABLE("json_schema", "enable json_schema", "no");
 
-if (PHP_HELLOWORLD != "no") {
-	EXTENSION("helloworld", "helloworld.c");
-	AC_DEFINE('HAVE_HELLOWORLD', 1 , 'whether helloworld is enabled');
-	PHP_INSTALL_HEADERS("ext/helloworld/", "php_helloworld.h");
+if (PHP_JSON_SCHEMA != "no") {
+	EXTENSION("json_schema", "json_schema.c validator.c");
+	AC_DEFINE('HAVE_JSON_SCHEMA', 1, 'whether json_schema is enabled');
+	PHP_INSTALL_HEADERS("ext/json_schema/", "php_json_schema.h validator.h");
 }

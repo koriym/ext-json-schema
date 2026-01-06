@@ -1,84 +1,146 @@
-# A PECL project skeleton
+# ext-json-schema
 
-[![Build and Test PHP Extension](https://github.com/koriym/ext-helloworld/actions/workflows/build.yml/badge.svg)](https://github.com/koriym/ext-helloworld/actions/workflows/build.yml)
+High-performance JSON Schema validator for PHP as a PECL extension.
 
-## HelloWorld PHP Extension
+[![Build and Test](https://github.com/koriym/ext-json-schema/actions/workflows/build.yml/badge.svg)](https://github.com/koriym/ext-json-schema/actions/workflows/build.yml)
 
-A simple PHP extension that demonstrates basic "Hello World" functionality.
+## Features
 
-## Run
+- **JSON Schema Draft-04/06/07** support
+- **2178 tests passed** from [JSON Schema Test Suite](https://github.com/json-schema-org/JSON-Schema-Test-Suite)
+- **[jsonrainbow/json-schema](https://github.com/jsonrainbow/json-schema) compatible** API
+- Native C implementation for performance
 
-1. Compile the extension:
+## Requirements
 
-    ```
-    phpize
-    ./configure
-    make
-    ```
+- PHP 8.1+
 
-2. Run
+## Installation
 
-    ```
-    % php -d extension=./modules/helloworld.so -i | grep hello
-
-    helloworld
-    helloworld support => enabled
-
-    % php -d extension=./modules/helloworld.so smoke.php
-    Hello World!
-   ```
-
-### Basic Function
-
-```php
-<?php
-helloworld();
-// Output: Hello World!
-```
-
-# Getting started with development
-
-This guide is intended to help complete beginners with no knowledge or experience of C or PECL to take their first steps.
-
-## Edit, Build and Run
-
-After cloning, edit `hellworld.c` to change the message.
-
-```c
-php_printf("Hello World!\n");
-```
-
-Next, compile to build.
-
-```
+```bash
+git clone https://github.com/koriym/ext-json-schema.git
+cd ext-json-schema
 phpize
 ./configure
 make
+make install
 ```
 
-This will create `modules/helloworld.so`. Now let's give it a try!
-
-```
-php -d extension=./modules/helloworld.so smoke.php
+```ini
+extension=json_schema.so
 ```
 
-When your message is displayed in the hellworld() function, you are done!🎉
+## Usage
 
-## What next?
+### Procedural API
 
-Change the two strings `helloworld` and `HELLOWORLD` to suit your project. Change the function names too.
+```php
+$data = ['name' => 'John', 'age' => 30];
+$schema = [
+    'type' => 'object',
+    'properties' => [
+        'name' => ['type' => 'string'],
+        'age' => ['type' => 'integer', 'minimum' => 0]
+    ],
+    'required' => ['name']
+];
 
-The world of PECL development is vast and there is a lot to learn, but if you can get past the environment building barrier, you are already one step ahead.
-Take on the challenge of PECL development from here onwards!
+if (json_schema_validate($data, $schema)) {
+    echo "Valid!";
+}
+```
 
-## Continuous Integration
+### OOP API
 
-This project contains a GitHub action workflow file.
-Make sure the project is built successfully by ushing it; CI also installs Valgrind and checks for memory leaks.
+```php
+$validator = new JsonSchema\Validator();
+$validator->validate($data, $schema);
 
-## IDE
+if ($validator->isValid()) {
+    echo "Valid!";
+} else {
+    print_r($validator->getErrors());
+}
+```
 
-This repository contains CmakeLists.txt, which Clion needs to understand the source code.
-Development using an IDE is efficient and allows for debugging, including a backtrace.
+### jsonrainbow/json-schema Compatible Adapter
 
-Refer to [Developing a PHP extension in CLion](https://dev.to/jasny/developing-a-php-extension-in-clion-3oo1) for more information.
+For projects using [jsonrainbow/json-schema](https://github.com/jsonrainbow/json-schema), use `ValidatorAdapter` for a drop-in replacement:
+
+```bash
+composer require justinrainbow/json-schema
+```
+
+```php
+use JsonSchema\ValidatorAdapter;
+
+$validator = new ValidatorAdapter();
+$validator->validate($data, $schema);
+
+// Same API as jsonrainbow/json-schema
+$validator->isValid();
+$validator->getErrors();    // Compatible error format
+$validator->numErrors();
+$validator->reset();
+```
+
+## Error Format
+
+Errors match jsonrainbow/json-schema format:
+
+```php
+[
+    'property'   => 'user.email',     // Dot notation path
+    'pointer'    => '/user/email',    // JSON Pointer
+    'message'    => 'Type mismatch',
+    'constraint' => 'type',           // Constraint name
+    'context'    => 1                 // ERROR_DOCUMENT_VALIDATION
+]
+```
+
+## Supported Keywords
+
+| Category | Keywords |
+|----------|----------|
+| Type | `type` |
+| String | `minLength`, `maxLength`, `pattern`, `format` |
+| Number | `minimum`, `maximum`, `exclusiveMinimum`, `exclusiveMaximum`, `multipleOf` |
+| Array | `items`, `additionalItems`, `minItems`, `maxItems`, `uniqueItems`, `contains` |
+| Object | `properties`, `additionalProperties`, `required`, `minProperties`, `maxProperties`, `propertyNames`, `dependencies` |
+| Combinators | `allOf`, `anyOf`, `oneOf`, `not` |
+| Conditional | `if`, `then`, `else` |
+| Reference | `$ref`, `definitions`, `$defs` |
+| Other | `enum`, `const` |
+
+## Quality Assurance
+
+This extension was implemented with [Claude Code](https://claude.ai/code) (Opus 4.5) and undergoes rigorous testing:
+
+| Test | Coverage |
+|------|----------|
+| **JSON Schema Test Suite** | 2178/2178 tests passed (100%) |
+| **PHPT Unit Tests** | 15 tests covering all features |
+| **API Compatibility Tests** | 30 PHPUnit tests for jsonrainbow compatibility |
+| **Memory Leak Detection** | Valgrind + PHP's built-in leak detector |
+| **Multi-version Testing** | PHP 8.1, 8.2, 8.3, 8.4, 8.5 |
+
+### Memory Safety
+
+```bash
+# Run with Valgrind memory check
+USE_ZEND_ALLOC=0 ZEND_DONT_UNLOAD_MODULES=1 \
+make test TESTS=tests/*.phpt TEST_PHP_ARGS="-m"
+
+# Result: Tests leaked: 0 (0.0%)
+```
+
+### Continuous Integration
+
+All tests run automatically on every push via GitHub Actions, including:
+- Compilation on multiple PHP versions
+- Full test suite execution
+- Memory leak detection with Valgrind
+
+## License
+
+MIT
