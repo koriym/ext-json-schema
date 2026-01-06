@@ -17,6 +17,8 @@ High-performance JSON Schema validator for PHP as a PECL extension.
 
 ## Installation
 
+### PECL Extension
+
 ```bash
 git clone https://github.com/koriym/ext-json-schema.git
 cd ext-json-schema
@@ -26,8 +28,18 @@ make
 make install
 ```
 
+Add to your `php.ini`:
+
 ```ini
 extension=json_schema.so
+```
+
+### PHP Adapter (Optional)
+
+For `ValidatorAdapter` that provides jsonrainbow/json-schema compatible API:
+
+```bash
+composer require koriym/ext-json-schema:dev-1.x
 ```
 
 ## Usage
@@ -66,10 +78,6 @@ if ($validator->isValid()) {
 ### jsonrainbow/json-schema Compatible Adapter
 
 For projects using [jsonrainbow/json-schema](https://github.com/jsonrainbow/json-schema), use `ValidatorAdapter` for a drop-in replacement:
-
-```bash
-composer require justinrainbow/json-schema
-```
 
 ```php
 use JsonSchema\ValidatorAdapter;

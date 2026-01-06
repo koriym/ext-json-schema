@@ -137,9 +137,13 @@ static void errors_to_array(json_schema_context *ctx, zval *errors_array)
         zval error_obj;
         array_init(&error_obj);
 
-        /* property: convert pointer to property path (foo.bar format) */
-        zend_string *property = pointer_to_property(error->pointer);
-        add_assoc_str(&error_obj, "property", property);
+        /* property: use pre-built property from validator, fallback to conversion */
+        if (error->property) {
+            add_assoc_str(&error_obj, "property", zend_string_copy(error->property));
+        } else {
+            zend_string *property = pointer_to_property(error->pointer);
+            add_assoc_str(&error_obj, "property", property);
+        }
 
         /* pointer: JSON pointer format (/foo/bar) */
         if (error->pointer) {

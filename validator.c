@@ -451,6 +451,11 @@ static zend_ulong json_schema_value_hash(zval *val)
 
 int json_schema_values_equal(zval *a, zval *b)
 {
+    /* Fast path: identity check */
+    if (a == b) {
+        return 1;
+    }
+
     /* Handle array/object comparison - both are comparable in JSON context */
     int a_is_container = (Z_TYPE_P(a) == IS_ARRAY || Z_TYPE_P(a) == IS_OBJECT);
     int b_is_container = (Z_TYPE_P(b) == IS_ARRAY || Z_TYPE_P(b) == IS_OBJECT);
@@ -1513,20 +1518,41 @@ zval *json_schema_resolve_ref(zend_string *ref, json_schema_context *ctx)
 int json_schema_validate_ref(zval *data, zend_string *ref, json_schema_context *ctx)
 {
     /*
-     * Note: We rely on recursion depth limit to prevent infinite recursion.
-     * The $ref cycle detection stack is available for detecting true schema cycles
-     * (A -> B -> A) but recursive data structures validating against self-referencing
-     * schemas (like {"$ref": "#"}) are handled by the depth limit.
+     * Cycle detection for $ref resolution.
+     * Root references ("#") are allowed to recurse since data will eventually terminate.
+     * Definition references are checked for cycles to prevent A -> B -> A loops.
      */
+    const char *ref_str = ZSTR_VAL(ref);
+    int check_cycle = (strncmp(ref_str, "#/definitions/", 14) == 0 ||
+                       strncmp(ref_str, "#/$defs/", 8) == 0);
+
+    if (check_cycle) {
+        if (!json_schema_context_push_ref(ctx, ref)) {
+            char msg[512];
+            snprintf(msg, sizeof(msg), "Circular $ref detected: '%s'", ZSTR_VAL(ref));
+            json_schema_context_add_error(ctx, JSON_SCHEMA_ERROR_REF, msg, NULL);
+            return 0;
+        }
+    }
+
     zval *resolved = json_schema_resolve_ref(ref, ctx);
     if (!resolved) {
         char msg[512];
         snprintf(msg, sizeof(msg), "Cannot resolve $ref '%s'", ZSTR_VAL(ref));
         json_schema_context_add_error(ctx, JSON_SCHEMA_ERROR_REF, msg, NULL);
+        if (check_cycle) {
+            json_schema_context_pop_ref(ctx);
+        }
         return 0;
     }
 
-    return validate_against_schema(data, resolved, ctx);
+    int result = validate_against_schema(data, resolved, ctx);
+
+    if (check_cycle) {
+        json_schema_context_pop_ref(ctx);
+    }
+
+    return result;
 }
 
 /* ============================================================================
