@@ -15,16 +15,16 @@ Provides both procedural and OOP APIs, with compatibility layer for jsonrainbow/
  <date>2026-01-06</date>
  <time>12:00:00</time>
  <version>
-  <release>1.0.0</release>
-  <api>1.0.0</api>
+  <release>0.1.0</release>
+  <api>0.1.0</api>
  </version>
  <stability>
-  <release>stable</release>
-  <api>stable</api>
+  <release>beta</release>
+  <api>beta</api>
  </stability>
  <license uri="https://opensource.org/licenses/MIT">MIT</license>
  <notes>
-Initial stable release.
+Initial beta release.
 - Support for JSON Schema Draft-04/06/07
 - Optimized O(n) uniqueItems validation
 - Circular reference detection and recursion depth limits
@@ -76,17 +76,17 @@ Initial stable release.
  <changelog>
   <release>
    <version>
-    <release>1.0.0</release>
-    <api>1.0.0</api>
+    <release>0.1.0</release>
+    <api>0.1.0</api>
    </version>
    <stability>
-    <release>stable</release>
-    <api>stable</api>
+    <release>beta</release>
+    <api>beta</api>
    </stability>
    <date>2026-01-06</date>
    <license uri="https://opensource.org/licenses/MIT">MIT</license>
    <notes>
-Initial stable release with JSON Schema Draft-04/06/07 support.
+Initial beta release with JSON Schema Draft-04/06/07 support.
    </notes>
   </release>
  </changelog>
