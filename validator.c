@@ -67,6 +67,54 @@ void json_schema_context_add_error(json_schema_context *ctx, int constraint, con
     ctx->error_count++;
 }
 
+void json_schema_context_truncate_errors(json_schema_context *ctx, int target_count)
+{
+    if (ctx->error_count <= target_count) {
+        return;
+    }
+
+    if (target_count == 0) {
+        /* Free all errors */
+        json_schema_error *error = ctx->errors;
+        while (error) {
+            json_schema_error *next = error->next;
+            if (error->message) zend_string_release(error->message);
+            if (error->property) zend_string_release(error->property);
+            if (error->pointer) zend_string_release(error->pointer);
+            efree(error);
+            error = next;
+        }
+        ctx->errors = NULL;
+        ctx->errors_tail = NULL;
+        ctx->error_count = 0;
+        return;
+    }
+
+    /* Find the node at target_count position */
+    json_schema_error *current = ctx->errors;
+    for (int i = 1; i < target_count && current; i++) {
+        current = current->next;
+    }
+
+    /* Free nodes after current */
+    if (current) {
+        json_schema_error *to_free = current->next;
+        current->next = NULL;
+        ctx->errors_tail = current;
+
+        while (to_free) {
+            json_schema_error *next = to_free->next;
+            if (to_free->message) zend_string_release(to_free->message);
+            if (to_free->property) zend_string_release(to_free->property);
+            if (to_free->pointer) zend_string_release(to_free->pointer);
+            efree(to_free);
+            to_free = next;
+        }
+    }
+
+    ctx->error_count = target_count;
+}
+
 void json_schema_context_push_path(json_schema_context *ctx, const char *segment)
 {
     smart_str path = {0};
@@ -582,7 +630,8 @@ int json_schema_validate_unique_items(zval *data, json_schema_context *ctx)
         return 1;
     }
 
-    zval *items[count];
+    /* Use heap allocation to avoid stack overflow with large arrays */
+    zval **items = emalloc(count * sizeof(zval *));
     zend_ulong i = 0;
     zval *item;
 
@@ -596,11 +645,13 @@ int json_schema_validate_unique_items(zval *data, json_schema_context *ctx)
                 char msg[256];
                 snprintf(msg, sizeof(msg), "Array contains duplicate items at indices %lu and %lu", i, j);
                 json_schema_context_add_error(ctx, JSON_SCHEMA_ERROR_UNIQUE_ITEMS, msg, NULL);
+                efree(items);
                 return 0;
             }
         }
     }
 
+    efree(items);
     return 1;
 }
 
@@ -618,14 +669,14 @@ int json_schema_validate_contains(zval *data, zval *contains_schema, json_schema
         validate_against_schema(item, contains_schema, ctx);
 
         if (ctx->error_count == errors_before) {
-            /* Reset to original error count since we found a match */
-            ctx->error_count = original_error_count;
+            /* Truncate errors to original count since we found a match */
+            json_schema_context_truncate_errors(ctx, original_error_count);
             return 1;
         }
     } ZEND_HASH_FOREACH_END();
 
-    /* Reset errors and add contains error */
-    ctx->error_count = original_error_count;
+    /* Truncate errors and add contains error */
+    json_schema_context_truncate_errors(ctx, original_error_count);
     json_schema_context_add_error(ctx, JSON_SCHEMA_ERROR_CONTAINS,
         "Array does not contain any item matching the schema", NULL);
     return 0;
@@ -1057,14 +1108,14 @@ int json_schema_validate_any_of(zval *data, zval *schemas, json_schema_context *
         validate_against_schema(data, schema, ctx);
 
         if (ctx->error_count == errors_before) {
-            /* Reset to original error count since we found a match */
-            ctx->error_count = original_error_count;
+            /* Truncate errors to original count since we found a match */
+            json_schema_context_truncate_errors(ctx, original_error_count);
             return 1;
         }
     } ZEND_HASH_FOREACH_END();
 
-    /* Reset errors and add anyOf error */
-    ctx->error_count = original_error_count;
+    /* Truncate errors and add anyOf error */
+    json_schema_context_truncate_errors(ctx, original_error_count);
     json_schema_context_add_error(ctx, JSON_SCHEMA_ERROR_ANY_OF,
         "Value does not match any schema in anyOf", NULL);
     return 0;
@@ -1089,8 +1140,8 @@ int json_schema_validate_one_of(zval *data, zval *schemas, json_schema_context *
         }
     } ZEND_HASH_FOREACH_END();
 
-    /* Reset error count */
-    ctx->error_count = original_error_count;
+    /* Truncate errors to original count */
+    json_schema_context_truncate_errors(ctx, original_error_count);
 
     if (match_count != 1) {
         char msg[256];
@@ -1114,8 +1165,8 @@ int json_schema_validate_not(zval *data, zval *schema, json_schema_context *ctx)
         return 0;
     }
 
-    /* Reset errors since validation should fail */
-    ctx->error_count = original_error_count;
+    /* Truncate errors since validation should fail */
+    json_schema_context_truncate_errors(ctx, original_error_count);
     return 1;
 }
 
@@ -1125,7 +1176,7 @@ int json_schema_validate_if_then_else(zval *data, zval *if_schema, zval *then_sc
     validate_against_schema(data, if_schema, ctx);
 
     int if_passed = (ctx->error_count == original_error_count);
-    ctx->error_count = original_error_count;
+    json_schema_context_truncate_errors(ctx, original_error_count);
 
     if (if_passed) {
         if (then_schema && Z_TYPE_P(then_schema) != IS_NULL) {

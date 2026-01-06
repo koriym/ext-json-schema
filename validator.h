@@ -75,6 +75,7 @@ zval *json_schema_resolve_ref(zend_string *ref, json_schema_context *ctx);
 json_schema_context *json_schema_context_create(int check_mode);
 void json_schema_context_free(json_schema_context *ctx);
 void json_schema_context_add_error(json_schema_context *ctx, int constraint, const char *message, const char *property);
+void json_schema_context_truncate_errors(json_schema_context *ctx, int target_count);
 void json_schema_context_push_path(json_schema_context *ctx, const char *segment);
 void json_schema_context_push_path_index(json_schema_context *ctx, zend_long index);
 void json_schema_context_pop_path(json_schema_context *ctx);
