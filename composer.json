@@ -1,6 +1,6 @@
 {
     "name": "koriym/ext-json-schema",
-    "description": "Adapter layer for using PECL json_schema extension with jsonrainbow/json-schema API compatibility",
+    "description": "Adapter for using PECL json_schema extension with jsonrainbow/json-schema API compatibility",
     "type": "library",
     "license": "MIT",
     "keywords": ["json-schema", "pecl"],
