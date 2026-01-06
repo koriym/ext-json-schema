@@ -44,7 +44,7 @@ jobs:
         run: php -dextension=./modules/json_schema.so run_test_suite.php
 
       - name: Install Composer dependencies
-        run: composer install --no-progress
+        run: composer install --no-progress --ignore-platform-req=ext-json_schema
 
       - name: Run PHPUnit tests
         run: php -dextension=./modules/json_schema.so vendor/bin/phpunit
