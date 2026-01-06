@@ -25,12 +25,8 @@
  * Data Structures
  * ========================================================================== */
 
-/* Path segment for lazy path evaluation */
-typedef struct _json_schema_path_segment {
-    char *segment;           /* Segment string (owned) */
-    zend_long index;         /* Index for array access (-1 if string segment) */
-    int is_index;            /* 1 if index, 0 if string */
-} json_schema_path_segment;
+/* Path segment for lazy path evaluation (opaque - defined in validator.c) */
+typedef struct _json_schema_path_segment json_schema_path_segment;
 
 /* Validation error structure */
 typedef struct _json_schema_error {
@@ -133,12 +129,6 @@ void json_schema_context_truncate_errors(json_schema_context *ctx, int target_co
 void json_schema_context_push_path(json_schema_context *ctx, const char *segment);
 void json_schema_context_push_path_index(json_schema_context *ctx, zend_long index);
 void json_schema_context_pop_path(json_schema_context *ctx);
-zend_string *json_schema_context_build_path(json_schema_context *ctx);
-zend_string *json_schema_context_build_property(json_schema_context *ctx);
-
-/* $ref cycle detection */
-int json_schema_context_push_ref(json_schema_context *ctx, zend_string *ref);
-void json_schema_context_pop_ref(json_schema_context *ctx);
 
 /* ============================================================================
  * Utility functions
@@ -148,9 +138,5 @@ int json_schema_is_type(zval *data, const char *type);
 int json_schema_values_equal(zval *a, zval *b);
 zend_string *json_schema_get_type_name(zval *data);
 int json_schema_coerce_type(zval *data, const char *target_type);
-
-/* JSON Pointer utilities (RFC 6901) */
-char *json_schema_decode_json_pointer(const char *encoded);
-char *json_schema_pointer_to_property(const char *pointer);
 
 #endif /* JSON_SCHEMA_VALIDATOR_H */

@@ -12,6 +12,13 @@
 #include <math.h>
 #include <ctype.h>
 
+/* Path segment structure (opaque in header) */
+struct _json_schema_path_segment {
+    char *segment;           /* Segment string (owned) */
+    zend_long index;         /* Index for array access (-1 if string segment) */
+    int is_index;            /* 1 if index, 0 if string */
+};
+
 /* Forward declarations */
 static int validate_against_schema(zval *data, zval *schema, json_schema_context *ctx);
 
@@ -80,8 +87,8 @@ void json_schema_context_free(json_schema_context *ctx)
     efree(ctx);
 }
 
-/* Build JSON Pointer path from segments (lazy evaluation) */
-zend_string *json_schema_context_build_path(json_schema_context *ctx)
+/* Build JSON Pointer path from segments (lazy evaluation) - internal */
+static zend_string *json_schema_context_build_path(json_schema_context *ctx)
 {
     if (ctx->path_depth == 0) {
         return zend_string_init("", 0, 0);
@@ -111,8 +118,8 @@ zend_string *json_schema_context_build_path(json_schema_context *ctx)
     return smart_str_extract(&path);
 }
 
-/* Build dot-notation property path from segments */
-zend_string *json_schema_context_build_property(json_schema_context *ctx)
+/* Build dot-notation property path from segments - internal */
+static zend_string *json_schema_context_build_property(json_schema_context *ctx)
 {
     if (ctx->path_depth == 0) {
         return zend_string_init("", 0, 0);
@@ -227,8 +234,8 @@ void json_schema_context_pop_path(json_schema_context *ctx)
     }
 }
 
-/* $ref cycle detection */
-int json_schema_context_push_ref(json_schema_context *ctx, zend_string *ref)
+/* $ref cycle detection - internal */
+static int json_schema_context_push_ref(json_schema_context *ctx, zend_string *ref)
 {
     /* Check for cycles */
     for (int i = 0; i < ctx->ref_stack_depth; i++) {
@@ -255,7 +262,7 @@ int json_schema_context_push_ref(json_schema_context *ctx, zend_string *ref)
     return 1;
 }
 
-void json_schema_context_pop_ref(json_schema_context *ctx)
+static void json_schema_context_pop_ref(json_schema_context *ctx)
 {
     if (ctx->ref_stack_depth > 0) {
         ctx->ref_stack_depth--;
@@ -794,13 +801,6 @@ int json_schema_validate_max_items(zval *data, zend_long max_items, json_schema_
     return 1;
 }
 
-/* Item entry for uniqueItems hash bucket chain */
-typedef struct _unique_item_entry {
-    zval *item;
-    zend_ulong index;
-    struct _unique_item_entry *next;
-} unique_item_entry;
-
 int json_schema_validate_unique_items(zval *data, json_schema_context *ctx)
 {
     if (Z_TYPE_P(data) != IS_ARRAY) {
@@ -814,57 +814,48 @@ int json_schema_validate_unique_items(zval *data, json_schema_context *ctx)
         return 1;
     }
 
-    /* Use hash table with chaining for O(n) average case instead of O(n²) */
+    /* Use hash table for O(n) average case instead of O(n²) */
     HashTable buckets;
     zend_hash_init(&buckets, count, NULL, NULL, 0);
+
+    /* Parallel arrays for items and their hashes */
+    zval **items = emalloc(count * sizeof(zval *));
+    zend_ulong *hashes = emalloc(count * sizeof(zend_ulong));
 
     zval *item;
     zend_ulong idx = 0;
     int result = 1;
-    unique_item_entry *all_entries = emalloc(count * sizeof(unique_item_entry));
-    zend_ulong entry_count = 0;
 
     ZEND_HASH_FOREACH_VAL(arr, item) {
-        zend_ulong hash = json_schema_value_hash(item);
+        zend_ulong h = json_schema_value_hash(item);
+        hashes[idx] = h;
+        items[idx] = item;
 
-        /* Check existing items in this hash bucket */
-        zval *bucket_head = zend_hash_index_find(&buckets, hash);
-        if (bucket_head) {
-            unique_item_entry *entry = (unique_item_entry *)(uintptr_t)Z_LVAL_P(bucket_head);
-            while (entry) {
-                if (json_schema_values_equal(item, entry->item)) {
+        zval *existing_idx_zv = zend_hash_index_find(&buckets, h);
+        if (existing_idx_zv) {
+            /* Scan previous items with the same hash */
+            for (zend_ulong j = 0; j < idx; j++) {
+                if (hashes[j] == h && json_schema_values_equal(items[j], item)) {
                     char msg[256];
                     snprintf(msg, sizeof(msg), "Array contains duplicate items at indices %lu and %lu",
-                             entry->index, idx);
+                             (unsigned long)j, (unsigned long)idx);
                     json_schema_context_add_error(ctx, JSON_SCHEMA_ERROR_UNIQUE_ITEMS, msg, NULL);
                     result = 0;
-                    break;
+                    goto done;
                 }
-                entry = entry->next;
             }
-            if (!result) break;
-        }
-
-        /* Add new entry to bucket chain */
-        unique_item_entry *new_entry = &all_entries[entry_count++];
-        new_entry->item = item;
-        new_entry->index = idx;
-
-        if (bucket_head) {
-            new_entry->next = (unique_item_entry *)(uintptr_t)Z_LVAL_P(bucket_head);
-            /* Update the bucket head pointer */
-            Z_LVAL_P(bucket_head) = (zend_long)(uintptr_t)new_entry;
         } else {
-            new_entry->next = NULL;
-            zval head;
-            ZVAL_LONG(&head, (zend_long)(uintptr_t)new_entry);
-            zend_hash_index_add(&buckets, hash, &head);
+            zval new_idx_zv;
+            ZVAL_LONG(&new_idx_zv, idx);
+            zend_hash_index_add(&buckets, h, &new_idx_zv);
         }
 
         idx++;
     } ZEND_HASH_FOREACH_END();
 
-    efree(all_entries);
+done:
+    efree(items);
+    efree(hashes);
     zend_hash_destroy(&buckets);
     return result;
 }
