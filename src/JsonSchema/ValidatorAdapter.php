@@ -63,7 +63,7 @@ class ValidatorAdapter extends BaseConstraint
         }
 
         // Fallback to parent implementation (pure PHP)
-        return parent::validate($value, $schema, $checkMode);
+        return parent::validate($value, $schema, $checkMode); // @codeCoverageIgnore
     }
 
     /**
@@ -113,16 +113,16 @@ class ValidatorAdapter extends BaseConstraint
         $peclMode = 0;
 
         if (defined('JSON_SCHEMA_CHECK_MODE_TYPE_CAST') && ($checkMode & Constraint::CHECK_MODE_TYPE_CAST)) {
-            $peclMode |= \JSON_SCHEMA_CHECK_MODE_TYPE_CAST;
+            $peclMode |= \JSON_SCHEMA_CHECK_MODE_TYPE_CAST; // @codeCoverageIgnore
         }
         if (defined('JSON_SCHEMA_CHECK_MODE_COERCE_TYPES') && ($checkMode & Constraint::CHECK_MODE_COERCE_TYPES)) {
-            $peclMode |= \JSON_SCHEMA_CHECK_MODE_COERCE_TYPES;
+            $peclMode |= \JSON_SCHEMA_CHECK_MODE_COERCE_TYPES; // @codeCoverageIgnore
         }
         if (defined('JSON_SCHEMA_CHECK_MODE_APPLY_DEFAULTS') && ($checkMode & Constraint::CHECK_MODE_APPLY_DEFAULTS)) {
-            $peclMode |= \JSON_SCHEMA_CHECK_MODE_APPLY_DEFAULTS;
+            $peclMode |= \JSON_SCHEMA_CHECK_MODE_APPLY_DEFAULTS; // @codeCoverageIgnore
         }
         if (defined('JSON_SCHEMA_CHECK_MODE_DISABLE_FORMAT') && ($checkMode & Constraint::CHECK_MODE_DISABLE_FORMAT)) {
-            $peclMode |= \JSON_SCHEMA_CHECK_MODE_DISABLE_FORMAT;
+            $peclMode |= \JSON_SCHEMA_CHECK_MODE_DISABLE_FORMAT; // @codeCoverageIgnore
         }
 
         return $peclMode;

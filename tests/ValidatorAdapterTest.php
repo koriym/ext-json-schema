@@ -244,7 +244,7 @@ class ValidatorAdapterTest extends TestCase
         $schema = json_decode('{"type": "object", "properties": {"name": {"type": "string"}}}');
 
         $result = $validator->check($data, $schema);
-        $this->assertEquals(0, $result);
+        $this->assertEquals($this->validatorClass::ERROR_NONE, $result);
     }
 
     public function testCoerceMethodWorks(): void
@@ -254,7 +254,7 @@ class ValidatorAdapterTest extends TestCase
         $schema = json_decode('{"type": "object", "properties": {"name": {"type": "string"}}}');
 
         $result = $validator->coerce($data, $schema);
-        $this->assertEquals(0, $result);
+        $this->assertEquals($this->validatorClass::ERROR_NONE, $result);
     }
 
     public function testValidateWithNullSchema(): void
@@ -263,7 +263,7 @@ class ValidatorAdapterTest extends TestCase
         $data = json_decode('{"name": "John"}');
 
         $result = $validator->validate($data, null);
-        $this->assertEquals(0, $result);
+        $this->assertEquals($this->validatorClass::ERROR_NONE, $result);
         $this->assertTrue($validator->isValid());
     }
 
