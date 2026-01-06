@@ -28,7 +28,21 @@ json_schema_context *json_schema_context_create(int check_mode)
     ctx->error_count = 0;
     ctx->definitions = NULL;
     ctx->root_schema = NULL;
-    ctx->current_path = zend_string_init("", 0, 0);
+
+    /* Recursion depth tracking */
+    ctx->depth = 0;
+    ctx->max_depth = JSON_SCHEMA_MAX_DEPTH;
+
+    /* Lazy path evaluation - start with reasonable capacity */
+    ctx->path_capacity = 32;
+    ctx->path_segments = emalloc(ctx->path_capacity * sizeof(json_schema_path_segment));
+    ctx->path_depth = 0;
+
+    /* $ref cycle detection */
+    ctx->ref_stack_capacity = 16;
+    ctx->ref_stack = emalloc(ctx->ref_stack_capacity * sizeof(zend_string *));
+    ctx->ref_stack_depth = 0;
+
     return ctx;
 }
 
@@ -48,18 +62,84 @@ static void json_schema_free_error_chain(json_schema_error *error)
 void json_schema_context_free(json_schema_context *ctx)
 {
     json_schema_free_error_chain(ctx->errors);
-    if (ctx->current_path) {
-        zend_string_release(ctx->current_path);
+
+    /* Free path segments */
+    for (int i = 0; i < ctx->path_depth; i++) {
+        if (ctx->path_segments[i].segment) {
+            efree(ctx->path_segments[i].segment);
+        }
     }
+    efree(ctx->path_segments);
+
+    /* Free ref stack */
+    for (int i = 0; i < ctx->ref_stack_depth; i++) {
+        zend_string_release(ctx->ref_stack[i]);
+    }
+    efree(ctx->ref_stack);
+
     efree(ctx);
+}
+
+/* Build JSON Pointer path from segments (lazy evaluation) */
+zend_string *json_schema_context_build_path(json_schema_context *ctx)
+{
+    if (ctx->path_depth == 0) {
+        return zend_string_init("", 0, 0);
+    }
+
+    smart_str path = {0};
+    for (int i = 0; i < ctx->path_depth; i++) {
+        smart_str_appendc(&path, '/');
+        if (ctx->path_segments[i].is_index) {
+            smart_str_append_long(&path, ctx->path_segments[i].index);
+        } else {
+            /* Escape special characters for JSON Pointer (RFC 6901) */
+            const char *seg = ctx->path_segments[i].segment;
+            while (*seg) {
+                if (*seg == '~') {
+                    smart_str_appendl(&path, "~0", 2);
+                } else if (*seg == '/') {
+                    smart_str_appendl(&path, "~1", 2);
+                } else {
+                    smart_str_appendc(&path, *seg);
+                }
+                seg++;
+            }
+        }
+    }
+    smart_str_0(&path);
+    return smart_str_extract(&path);
+}
+
+/* Build dot-notation property path from segments */
+zend_string *json_schema_context_build_property(json_schema_context *ctx)
+{
+    if (ctx->path_depth == 0) {
+        return zend_string_init("", 0, 0);
+    }
+
+    smart_str prop = {0};
+    for (int i = 0; i < ctx->path_depth; i++) {
+        if (i > 0) {
+            smart_str_appendc(&prop, '.');
+        }
+        if (ctx->path_segments[i].is_index) {
+            smart_str_append_long(&prop, ctx->path_segments[i].index);
+        } else {
+            smart_str_appends(&prop, ctx->path_segments[i].segment);
+        }
+    }
+    smart_str_0(&prop);
+    return smart_str_extract(&prop);
 }
 
 void json_schema_context_add_error(json_schema_context *ctx, int constraint, const char *message, const char *property)
 {
     json_schema_error *error = emalloc(sizeof(json_schema_error));
     error->message = zend_string_init(message, strlen(message), 0);
-    error->property = property ? zend_string_init(property, strlen(property), 0) : NULL;
-    error->pointer = zend_string_copy(ctx->current_path);
+    error->property = property ? zend_string_init(property, strlen(property), 0)
+                               : json_schema_context_build_property(ctx);
+    error->pointer = json_schema_context_build_path(ctx);
     error->constraint = constraint;
     error->next = NULL;
 
@@ -106,36 +186,80 @@ void json_schema_context_truncate_errors(json_schema_context *ctx, int target_co
 
 void json_schema_context_push_path(json_schema_context *ctx, const char *segment)
 {
-    smart_str path = {0};
-    smart_str_append(&path, ctx->current_path);
-    smart_str_appendc(&path, '/');
-    smart_str_appends(&path, segment);
-    smart_str_0(&path);
+    /* Expand capacity if needed */
+    if (ctx->path_depth >= ctx->path_capacity) {
+        ctx->path_capacity *= 2;
+        ctx->path_segments = erealloc(ctx->path_segments,
+            ctx->path_capacity * sizeof(json_schema_path_segment));
+    }
 
-    zend_string_release(ctx->current_path);
-    ctx->current_path = smart_str_extract(&path);
+    /* Add string segment */
+    ctx->path_segments[ctx->path_depth].segment = estrdup(segment);
+    ctx->path_segments[ctx->path_depth].index = -1;
+    ctx->path_segments[ctx->path_depth].is_index = 0;
+    ctx->path_depth++;
 }
 
 void json_schema_context_push_path_index(json_schema_context *ctx, zend_long index)
 {
-    smart_str path = {0};
-    smart_str_append(&path, ctx->current_path);
-    smart_str_appendc(&path, '/');
-    smart_str_append_long(&path, index);
-    smart_str_0(&path);
+    /* Expand capacity if needed */
+    if (ctx->path_depth >= ctx->path_capacity) {
+        ctx->path_capacity *= 2;
+        ctx->path_segments = erealloc(ctx->path_segments,
+            ctx->path_capacity * sizeof(json_schema_path_segment));
+    }
 
-    zend_string_release(ctx->current_path);
-    ctx->current_path = smart_str_extract(&path);
+    /* Add index segment */
+    ctx->path_segments[ctx->path_depth].segment = NULL;
+    ctx->path_segments[ctx->path_depth].index = index;
+    ctx->path_segments[ctx->path_depth].is_index = 1;
+    ctx->path_depth++;
 }
 
 void json_schema_context_pop_path(json_schema_context *ctx)
 {
-    char *last_slash = strrchr(ZSTR_VAL(ctx->current_path), '/');
-    if (last_slash) {
-        size_t new_len = last_slash - ZSTR_VAL(ctx->current_path);
-        zend_string *new_path = zend_string_init(ZSTR_VAL(ctx->current_path), new_len, 0);
-        zend_string_release(ctx->current_path);
-        ctx->current_path = new_path;
+    if (ctx->path_depth > 0) {
+        ctx->path_depth--;
+        if (ctx->path_segments[ctx->path_depth].segment) {
+            efree(ctx->path_segments[ctx->path_depth].segment);
+            ctx->path_segments[ctx->path_depth].segment = NULL;
+        }
+    }
+}
+
+/* $ref cycle detection */
+int json_schema_context_push_ref(json_schema_context *ctx, zend_string *ref)
+{
+    /* Check for cycles */
+    for (int i = 0; i < ctx->ref_stack_depth; i++) {
+        if (zend_string_equals(ctx->ref_stack[i], ref)) {
+            return 0; /* Cycle detected */
+        }
+    }
+
+    /* Check max depth */
+    if (ctx->ref_stack_depth >= JSON_SCHEMA_MAX_REF_DEPTH) {
+        return 0; /* Too deep */
+    }
+
+    /* Expand capacity if needed */
+    if (ctx->ref_stack_depth >= ctx->ref_stack_capacity) {
+        ctx->ref_stack_capacity *= 2;
+        ctx->ref_stack = erealloc(ctx->ref_stack,
+            ctx->ref_stack_capacity * sizeof(zend_string *));
+    }
+
+    /* Push ref onto stack */
+    ctx->ref_stack[ctx->ref_stack_depth] = zend_string_copy(ref);
+    ctx->ref_stack_depth++;
+    return 1;
+}
+
+void json_schema_context_pop_ref(json_schema_context *ctx)
+{
+    if (ctx->ref_stack_depth > 0) {
+        ctx->ref_stack_depth--;
+        zend_string_release(ctx->ref_stack[ctx->ref_stack_depth]);
     }
 }
 
@@ -252,6 +376,70 @@ int json_schema_is_type(zval *data, const char *type)
     }
 
     return 0;
+}
+
+/* Compute hash for a JSON value - used for O(n) uniqueItems check */
+static zend_ulong json_schema_value_hash(zval *val)
+{
+    zend_ulong hash = Z_TYPE_P(val);
+
+    switch (Z_TYPE_P(val)) {
+        case IS_NULL:
+            return hash;
+        case IS_TRUE:
+            return hash ^ 1;
+        case IS_FALSE:
+            return hash;
+        case IS_LONG:
+            return hash ^ (zend_ulong)Z_LVAL_P(val);
+        case IS_DOUBLE: {
+            /* Hash the double's bit representation */
+            union { double d; zend_ulong u; } u;
+            u.d = Z_DVAL_P(val);
+            return hash ^ u.u;
+        }
+        case IS_STRING:
+            return hash ^ ZSTR_HASH(Z_STR_P(val));
+        case IS_ARRAY:
+        case IS_OBJECT: {
+            HashTable *ht = (Z_TYPE_P(val) == IS_ARRAY) ? Z_ARRVAL_P(val) : Z_OBJPROP_P(val);
+            zend_ulong count = zend_hash_num_elements(ht);
+            hash ^= count << 8;
+
+            /* Check if this is an associative array (object-like) by looking for string keys */
+            int has_string_key = 0;
+            zend_string *key;
+            zend_ulong idx;
+            zval *elem;
+            ZEND_HASH_FOREACH_KEY(ht, idx, key) {
+                if (key) {
+                    has_string_key = 1;
+                    break;
+                }
+            } ZEND_HASH_FOREACH_END();
+
+            if (has_string_key) {
+                /* For objects/associative arrays: use XOR for order-independence */
+                ZEND_HASH_FOREACH_KEY_VAL(ht, idx, key, elem) {
+                    zend_ulong elem_hash = 0;
+                    if (key) {
+                        elem_hash = ZSTR_HASH(key);
+                    }
+                    /* Mix key hash with value hash using multiplication to avoid simple XOR cancellation */
+                    elem_hash = (elem_hash * 31) ^ json_schema_value_hash(elem);
+                    hash ^= elem_hash;  /* XOR is commutative - order independent */
+                } ZEND_HASH_FOREACH_END();
+            } else {
+                /* For numeric arrays: order matters, use position-sensitive hashing */
+                ZEND_HASH_FOREACH_KEY_VAL(ht, idx, key, elem) {
+                    hash = (hash * 31) ^ (idx << 4) ^ json_schema_value_hash(elem);
+                } ZEND_HASH_FOREACH_END();
+            }
+            return hash;
+        }
+        default:
+            return hash;
+    }
 }
 
 int json_schema_values_equal(zval *a, zval *b)
@@ -606,6 +794,13 @@ int json_schema_validate_max_items(zval *data, zend_long max_items, json_schema_
     return 1;
 }
 
+/* Item entry for uniqueItems hash bucket chain */
+typedef struct _unique_item_entry {
+    zval *item;
+    zend_ulong index;
+    struct _unique_item_entry *next;
+} unique_item_entry;
+
 int json_schema_validate_unique_items(zval *data, json_schema_context *ctx)
 {
     if (Z_TYPE_P(data) != IS_ARRAY) {
@@ -619,29 +814,59 @@ int json_schema_validate_unique_items(zval *data, json_schema_context *ctx)
         return 1;
     }
 
-    /* Use heap allocation to avoid stack overflow with large arrays */
-    zval **items = emalloc(count * sizeof(zval *));
-    zend_ulong i = 0;
+    /* Use hash table with chaining for O(n) average case instead of O(n²) */
+    HashTable buckets;
+    zend_hash_init(&buckets, count, NULL, NULL, 0);
+
     zval *item;
+    zend_ulong idx = 0;
+    int result = 1;
+    unique_item_entry *all_entries = emalloc(count * sizeof(unique_item_entry));
+    zend_ulong entry_count = 0;
 
     ZEND_HASH_FOREACH_VAL(arr, item) {
-        items[i++] = item;
+        zend_ulong hash = json_schema_value_hash(item);
+
+        /* Check existing items in this hash bucket */
+        zval *bucket_head = zend_hash_index_find(&buckets, hash);
+        if (bucket_head) {
+            unique_item_entry *entry = (unique_item_entry *)(uintptr_t)Z_LVAL_P(bucket_head);
+            while (entry) {
+                if (json_schema_values_equal(item, entry->item)) {
+                    char msg[256];
+                    snprintf(msg, sizeof(msg), "Array contains duplicate items at indices %lu and %lu",
+                             entry->index, idx);
+                    json_schema_context_add_error(ctx, JSON_SCHEMA_ERROR_UNIQUE_ITEMS, msg, NULL);
+                    result = 0;
+                    break;
+                }
+                entry = entry->next;
+            }
+            if (!result) break;
+        }
+
+        /* Add new entry to bucket chain */
+        unique_item_entry *new_entry = &all_entries[entry_count++];
+        new_entry->item = item;
+        new_entry->index = idx;
+
+        if (bucket_head) {
+            new_entry->next = (unique_item_entry *)(uintptr_t)Z_LVAL_P(bucket_head);
+            /* Update the bucket head pointer */
+            Z_LVAL_P(bucket_head) = (zend_long)(uintptr_t)new_entry;
+        } else {
+            new_entry->next = NULL;
+            zval head;
+            ZVAL_LONG(&head, (zend_long)(uintptr_t)new_entry);
+            zend_hash_index_add(&buckets, hash, &head);
+        }
+
+        idx++;
     } ZEND_HASH_FOREACH_END();
 
-    for (i = 0; i < count - 1; i++) {
-        for (zend_ulong j = i + 1; j < count; j++) {
-            if (json_schema_values_equal(items[i], items[j])) {
-                char msg[256];
-                snprintf(msg, sizeof(msg), "Array contains duplicate items at indices %lu and %lu", i, j);
-                json_schema_context_add_error(ctx, JSON_SCHEMA_ERROR_UNIQUE_ITEMS, msg, NULL);
-                efree(items);
-                return 0;
-            }
-        }
-    }
-
-    efree(items);
-    return 1;
+    efree(all_entries);
+    zend_hash_destroy(&buckets);
+    return result;
 }
 
 int json_schema_validate_contains(zval *data, zval *contains_schema, json_schema_context *ctx)
@@ -1296,6 +1521,12 @@ zval *json_schema_resolve_ref(zend_string *ref, json_schema_context *ctx)
 
 int json_schema_validate_ref(zval *data, zend_string *ref, json_schema_context *ctx)
 {
+    /*
+     * Note: We rely on recursion depth limit to prevent infinite recursion.
+     * The $ref cycle detection stack is available for detecting true schema cycles
+     * (A -> B -> A) but recursive data structures validating against self-referencing
+     * schemas (like {"$ref": "#"}) are handled by the depth limit.
+     */
     zval *resolved = json_schema_resolve_ref(ref, ctx);
     if (!resolved) {
         char msg[512];
@@ -1371,17 +1602,30 @@ int json_schema_validate_type(zval *data, zval *schema, json_schema_context *ctx
 
 static int validate_against_schema(zval *data, zval *schema, json_schema_context *ctx)
 {
+    /* Check recursion depth limit */
+    if (ctx->depth >= ctx->max_depth) {
+        json_schema_context_add_error(ctx, JSON_SCHEMA_ERROR_TYPE_MISMATCH,
+            "Maximum validation depth exceeded (possible circular reference)", NULL);
+        return 0;
+    }
+    ctx->depth++;
+
+    int result = 1;
+
     /* Handle boolean schemas (Draft-06+) */
     if (Z_TYPE_P(schema) == IS_TRUE) {
+        ctx->depth--;
         return 1;
     }
     if (Z_TYPE_P(schema) == IS_FALSE) {
         json_schema_context_add_error(ctx, JSON_SCHEMA_ERROR_TYPE_MISMATCH,
             "Schema is false, validation always fails", NULL);
+        ctx->depth--;
         return 0;
     }
 
     if (Z_TYPE_P(schema) != IS_ARRAY) {
+        ctx->depth--;
         return 1; /* Empty schema validates everything */
     }
 
@@ -1774,6 +2018,7 @@ static int validate_against_schema(zval *data, zval *schema, json_schema_context
         }
     }
 
+    ctx->depth--;
     return valid;
 }
 

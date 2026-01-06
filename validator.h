@@ -8,6 +8,30 @@
 #include "php.h"
 #include "zend_exceptions.h"
 
+/* ============================================================================
+ * Constants
+ * ========================================================================== */
+
+/* Maximum recursion depth to prevent stack overflow */
+#define JSON_SCHEMA_MAX_DEPTH 512
+
+/* Maximum path segments for lazy path evaluation */
+#define JSON_SCHEMA_MAX_PATH_SEGMENTS 256
+
+/* Maximum $ref resolution stack for cycle detection */
+#define JSON_SCHEMA_MAX_REF_DEPTH 64
+
+/* ============================================================================
+ * Data Structures
+ * ========================================================================== */
+
+/* Path segment for lazy path evaluation */
+typedef struct _json_schema_path_segment {
+    char *segment;           /* Segment string (owned) */
+    zend_long index;         /* Index for array access (-1 if string segment) */
+    int is_index;            /* 1 if index, 0 if string */
+} json_schema_path_segment;
+
 /* Validation error structure */
 typedef struct _json_schema_error {
     zend_string *message;
@@ -23,12 +47,28 @@ typedef struct _json_schema_context {
     json_schema_error *errors;
     json_schema_error *errors_tail;
     int error_count;
-    HashTable *definitions;    /* For $ref resolution */
-    zval *root_schema;         /* Root schema for $ref resolution */
-    zend_string *current_path; /* Current JSON pointer path */
+    HashTable *definitions;              /* For $ref resolution */
+    zval *root_schema;                   /* Root schema for $ref resolution */
+
+    /* Recursion depth tracking */
+    int depth;                           /* Current recursion depth */
+    int max_depth;                       /* Maximum allowed depth */
+
+    /* Lazy path evaluation */
+    json_schema_path_segment *path_segments;  /* Path segment stack */
+    int path_depth;                           /* Current path depth */
+    int path_capacity;                        /* Allocated capacity */
+
+    /* $ref cycle detection */
+    zend_string **ref_stack;             /* Stack of $ref URIs being resolved */
+    int ref_stack_depth;                 /* Current $ref stack depth */
+    int ref_stack_capacity;              /* Allocated capacity */
 } json_schema_context;
 
-/* Core validation functions */
+/* ============================================================================
+ * Core validation functions
+ * ========================================================================== */
+
 int json_schema_validate(zval *data, zval *schema, json_schema_context *ctx);
 int json_schema_validate_type(zval *data, zval *schema, json_schema_context *ctx);
 int json_schema_validate_string(zval *data, zval *schema, json_schema_context *ctx);
@@ -39,7 +79,10 @@ int json_schema_validate_object(zval *data, zval *schema, json_schema_context *c
 int json_schema_validate_boolean(zval *data, zval *schema, json_schema_context *ctx);
 int json_schema_validate_null(zval *data, zval *schema, json_schema_context *ctx);
 
-/* Constraint validation functions */
+/* ============================================================================
+ * Constraint validation functions
+ * ========================================================================== */
+
 int json_schema_validate_enum(zval *data, zval *enum_values, json_schema_context *ctx);
 int json_schema_validate_const(zval *data, zval *const_value, json_schema_context *ctx);
 int json_schema_validate_format(zval *data, zend_string *format, json_schema_context *ctx);
@@ -60,30 +103,54 @@ int json_schema_validate_property_names(zval *data, zval *property_names_schema,
 int json_schema_validate_contains(zval *data, zval *contains_schema, json_schema_context *ctx);
 int json_schema_validate_dependencies(zval *data, zval *dependencies, json_schema_context *ctx);
 
-/* Combinators */
+/* ============================================================================
+ * Combinators
+ * ========================================================================== */
+
 int json_schema_validate_all_of(zval *data, zval *schemas, json_schema_context *ctx);
 int json_schema_validate_any_of(zval *data, zval *schemas, json_schema_context *ctx);
 int json_schema_validate_one_of(zval *data, zval *schemas, json_schema_context *ctx);
 int json_schema_validate_not(zval *data, zval *schema, json_schema_context *ctx);
 int json_schema_validate_if_then_else(zval *data, zval *if_schema, zval *then_schema, zval *else_schema, json_schema_context *ctx);
 
-/* $ref resolution */
+/* ============================================================================
+ * $ref resolution
+ * ========================================================================== */
+
 int json_schema_validate_ref(zval *data, zend_string *ref, json_schema_context *ctx);
 zval *json_schema_resolve_ref(zend_string *ref, json_schema_context *ctx);
 
-/* Context management */
+/* ============================================================================
+ * Context management
+ * ========================================================================== */
+
 json_schema_context *json_schema_context_create(int check_mode);
 void json_schema_context_free(json_schema_context *ctx);
 void json_schema_context_add_error(json_schema_context *ctx, int constraint, const char *message, const char *property);
 void json_schema_context_truncate_errors(json_schema_context *ctx, int target_count);
+
+/* Path management (lazy evaluation) */
 void json_schema_context_push_path(json_schema_context *ctx, const char *segment);
 void json_schema_context_push_path_index(json_schema_context *ctx, zend_long index);
 void json_schema_context_pop_path(json_schema_context *ctx);
+zend_string *json_schema_context_build_path(json_schema_context *ctx);
+zend_string *json_schema_context_build_property(json_schema_context *ctx);
 
-/* Utility functions */
+/* $ref cycle detection */
+int json_schema_context_push_ref(json_schema_context *ctx, zend_string *ref);
+void json_schema_context_pop_ref(json_schema_context *ctx);
+
+/* ============================================================================
+ * Utility functions
+ * ========================================================================== */
+
 int json_schema_is_type(zval *data, const char *type);
 int json_schema_values_equal(zval *a, zval *b);
 zend_string *json_schema_get_type_name(zval *data);
 int json_schema_coerce_type(zval *data, const char *target_type);
+
+/* JSON Pointer utilities (RFC 6901) */
+char *json_schema_decode_json_pointer(const char *encoded);
+char *json_schema_pointer_to_property(const char *pointer);
 
 #endif /* JSON_SCHEMA_VALIDATOR_H */
