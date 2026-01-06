@@ -1486,7 +1486,8 @@ static zval *resolve_json_pointer(zval *root, const char *pointer)
 
         /* Decode percent-encoding */
         while (*src) {
-            if (*src == '%' && isxdigit((unsigned char)src[1]) && isxdigit((unsigned char)src[2])) {
+            if (*src == '%' && src[1] != '\0' && src[2] != '\0' &&
+                isxdigit((unsigned char)src[1]) && isxdigit((unsigned char)src[2])) {
                 int high = (src[1] >= 'a') ? (src[1] - 'a' + 10) : ((src[1] >= 'A') ? (src[1] - 'A' + 10) : (src[1] - '0'));
                 int low = (src[2] >= 'a') ? (src[2] - 'a' + 10) : ((src[2] >= 'A') ? (src[2] - 'A' + 10) : (src[2] - '0'));
                 *dst++ = (char)((high << 4) | low);
