@@ -30,6 +30,8 @@ static zend_object_handlers json_schema_validator_handlers;
 typedef struct _json_schema_validator_object {
     int check_mode;
     zval errors;        /* Array of error objects */
+    zval ref_resolver;  /* PHP callback for external $ref resolution */
+    zend_string *base_uri; /* Base URI for relative $ref resolution */
     zend_object std;
 } json_schema_validator_object;
 
@@ -49,6 +51,8 @@ static zend_object *json_schema_validator_create_object(zend_class_entry *ce)
 
     intern->check_mode = JSON_SCHEMA_CHECK_MODE_NORMAL;
     array_init(&intern->errors);
+    ZVAL_UNDEF(&intern->ref_resolver);
+    intern->base_uri = NULL;
 
     zend_object_std_init(&intern->std, ce);
     object_properties_init(&intern->std, ce);
@@ -63,6 +67,12 @@ static void json_schema_validator_free_object(zend_object *obj)
     json_schema_validator_object *intern = json_schema_validator_from_obj(obj);
 
     zval_ptr_dtor(&intern->errors);
+    if (Z_TYPE(intern->ref_resolver) != IS_UNDEF) {
+        zval_ptr_dtor(&intern->ref_resolver);
+    }
+    if (intern->base_uri) {
+        zend_string_release(intern->base_uri);
+    }
     zend_object_std_dtor(&intern->std);
 }
 
@@ -210,6 +220,14 @@ PHP_METHOD(JsonSchema_Validator, validate)
     /* Create validation context */
     json_schema_context *ctx = json_schema_context_create((int)check_mode);
 
+    /* Set external ref resolver if configured */
+    if (Z_TYPE(intern->ref_resolver) != IS_UNDEF) {
+        json_schema_context_set_resolver(ctx, &intern->ref_resolver);
+    }
+    if (intern->base_uri) {
+        json_schema_context_set_base_uri(ctx, intern->base_uri);
+    }
+
     /* Perform validation */
     int result = json_schema_validate(data, schema, ctx);
 
@@ -292,6 +310,60 @@ PHP_METHOD(JsonSchema_Validator, setCheckMode)
 
     json_schema_validator_object *intern = Z_JSON_SCHEMA_VALIDATOR_P(ZEND_THIS);
     intern->check_mode = (int)check_mode;
+}
+/* }}} */
+
+/* {{{ proto void JsonSchema\Validator::setRefResolver(?callable $resolver)
+   Sets the external $ref resolver callback */
+PHP_METHOD(JsonSchema_Validator, setRefResolver)
+{
+    zval *resolver = NULL;
+
+    ZEND_PARSE_PARAMETERS_START(1, 1)
+        Z_PARAM_ZVAL(resolver)
+    ZEND_PARSE_PARAMETERS_END();
+
+    json_schema_validator_object *intern = Z_JSON_SCHEMA_VALIDATOR_P(ZEND_THIS);
+
+    /* Release old resolver if set */
+    if (Z_TYPE(intern->ref_resolver) != IS_UNDEF) {
+        zval_ptr_dtor(&intern->ref_resolver);
+        ZVAL_UNDEF(&intern->ref_resolver);
+    }
+
+    /* Set new resolver if callable */
+    if (resolver && Z_TYPE_P(resolver) != IS_NULL) {
+        if (!zend_is_callable(resolver, 0, NULL)) {
+            zend_throw_exception(zend_ce_type_error, "Resolver must be callable or null", 0);
+            return;
+        }
+        ZVAL_COPY(&intern->ref_resolver, resolver);
+    }
+}
+/* }}} */
+
+/* {{{ proto void JsonSchema\Validator::setBaseUri(?string $baseUri)
+   Sets the base URI for relative $ref resolution */
+PHP_METHOD(JsonSchema_Validator, setBaseUri)
+{
+    zend_string *base_uri = NULL;
+
+    ZEND_PARSE_PARAMETERS_START(1, 1)
+        Z_PARAM_STR_OR_NULL(base_uri)
+    ZEND_PARSE_PARAMETERS_END();
+
+    json_schema_validator_object *intern = Z_JSON_SCHEMA_VALIDATOR_P(ZEND_THIS);
+
+    /* Release old base_uri if set */
+    if (intern->base_uri) {
+        zend_string_release(intern->base_uri);
+        intern->base_uri = NULL;
+    }
+
+    /* Set new base_uri */
+    if (base_uri) {
+        intern->base_uri = zend_string_copy(base_uri);
+    }
 }
 /* }}} */
 
@@ -407,6 +479,14 @@ ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(arginfo_json_schema_validator_set_check_
     ZEND_ARG_TYPE_INFO(0, checkMode, IS_LONG, 0)
 ZEND_END_ARG_INFO()
 
+ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(arginfo_json_schema_validator_set_ref_resolver, 0, 1, IS_VOID, 0)
+    ZEND_ARG_TYPE_INFO(0, resolver, IS_CALLABLE, 1)
+ZEND_END_ARG_INFO()
+
+ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(arginfo_json_schema_validator_set_base_uri, 0, 1, IS_VOID, 0)
+    ZEND_ARG_TYPE_INFO(0, baseUri, IS_STRING, 1)
+ZEND_END_ARG_INFO()
+
 /* Procedural API argument info */
 ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(arginfo_json_schema_validate, 0, 2, _IS_BOOL, 0)
     ZEND_ARG_TYPE_INFO(0, data, IS_MIXED, 0)
@@ -438,6 +518,8 @@ static const zend_function_entry json_schema_validator_methods[] = {
     PHP_ME(JsonSchema_Validator, reset, arginfo_json_schema_validator_reset, ZEND_ACC_PUBLIC)
     PHP_ME(JsonSchema_Validator, getCheckMode, arginfo_json_schema_validator_get_check_mode, ZEND_ACC_PUBLIC)
     PHP_ME(JsonSchema_Validator, setCheckMode, arginfo_json_schema_validator_set_check_mode, ZEND_ACC_PUBLIC)
+    PHP_ME(JsonSchema_Validator, setRefResolver, arginfo_json_schema_validator_set_ref_resolver, ZEND_ACC_PUBLIC)
+    PHP_ME(JsonSchema_Validator, setBaseUri, arginfo_json_schema_validator_set_base_uri, ZEND_ACC_PUBLIC)
     PHP_FE_END
 };
 

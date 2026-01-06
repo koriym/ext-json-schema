@@ -59,6 +59,11 @@ typedef struct _json_schema_context {
     zend_string **ref_stack;             /* Stack of $ref URIs being resolved */
     int ref_stack_depth;                 /* Current $ref stack depth */
     int ref_stack_capacity;              /* Allocated capacity */
+
+    /* External $ref resolution */
+    zval ref_resolver;                   /* PHP callback for external refs */
+    zend_string *base_uri;               /* Base URI for relative refs */
+    HashTable *resolved_schemas;         /* Cache of resolved external schemas */
 } json_schema_context;
 
 /* ============================================================================
@@ -129,6 +134,10 @@ void json_schema_context_truncate_errors(json_schema_context *ctx, int target_co
 void json_schema_context_push_path(json_schema_context *ctx, const char *segment);
 void json_schema_context_push_path_index(json_schema_context *ctx, zend_long index);
 void json_schema_context_pop_path(json_schema_context *ctx);
+
+/* External $ref resolver */
+void json_schema_context_set_resolver(json_schema_context *ctx, zval *resolver);
+void json_schema_context_set_base_uri(json_schema_context *ctx, zend_string *base_uri);
 
 /* ============================================================================
  * Utility functions
