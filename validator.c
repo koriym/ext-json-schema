@@ -50,6 +50,11 @@ json_schema_context *json_schema_context_create(int check_mode)
     ctx->ref_stack = emalloc(ctx->ref_stack_capacity * sizeof(zend_string *));
     ctx->ref_stack_depth = 0;
 
+    /* External $ref resolution */
+    ZVAL_UNDEF(&ctx->ref_resolver);
+    ctx->base_uri = NULL;
+    ctx->resolved_schemas = NULL;
+
     return ctx;
 }
 
@@ -83,6 +88,18 @@ void json_schema_context_free(json_schema_context *ctx)
         zend_string_release(ctx->ref_stack[i]);
     }
     efree(ctx->ref_stack);
+
+    /* Free external ref resolver resources */
+    if (Z_TYPE(ctx->ref_resolver) != IS_UNDEF) {
+        zval_ptr_dtor(&ctx->ref_resolver);
+    }
+    if (ctx->base_uri) {
+        zend_string_release(ctx->base_uri);
+    }
+    if (ctx->resolved_schemas) {
+        zend_hash_destroy(ctx->resolved_schemas);
+        FREE_HASHTABLE(ctx->resolved_schemas);
+    }
 
     efree(ctx);
 }
@@ -231,6 +248,31 @@ void json_schema_context_pop_path(json_schema_context *ctx)
             efree(ctx->path_segments[ctx->path_depth].segment);
             ctx->path_segments[ctx->path_depth].segment = NULL;
         }
+    }
+}
+
+/* External $ref resolver management */
+void json_schema_context_set_resolver(json_schema_context *ctx, zval *resolver)
+{
+    if (Z_TYPE(ctx->ref_resolver) != IS_UNDEF) {
+        zval_ptr_dtor(&ctx->ref_resolver);
+    }
+    if (resolver && Z_TYPE_P(resolver) != IS_NULL) {
+        ZVAL_COPY(&ctx->ref_resolver, resolver);
+    } else {
+        ZVAL_UNDEF(&ctx->ref_resolver);
+    }
+}
+
+void json_schema_context_set_base_uri(json_schema_context *ctx, zend_string *base_uri)
+{
+    if (ctx->base_uri) {
+        zend_string_release(ctx->base_uri);
+    }
+    if (base_uri) {
+        ctx->base_uri = zend_string_copy(base_uri);
+    } else {
+        ctx->base_uri = NULL;
     }
 }
 
@@ -1511,8 +1553,141 @@ zval *json_schema_resolve_ref(zend_string *ref, json_schema_context *ctx)
         return current;
     }
 
-    /* External references not supported in this implementation */
-    return NULL;
+    /* External reference - use PHP callback resolver */
+    if (Z_TYPE(ctx->ref_resolver) == IS_UNDEF) {
+        return NULL; /* No resolver configured */
+    }
+
+    /* Split URI and fragment: "other.json#/definitions/Foo" -> uri="other.json", fragment="/definitions/Foo" */
+    const char *fragment = strchr(ref_str, '#');
+    zend_string *uri;
+    if (fragment) {
+        uri = zend_string_init(ref_str, fragment - ref_str, 0);
+    } else {
+        uri = zend_string_copy(ref);
+    }
+
+    /* Check cache first */
+    zval *cached = NULL;
+    if (ctx->resolved_schemas) {
+        cached = zend_hash_find(ctx->resolved_schemas, uri);
+    }
+
+    zval *external_schema = NULL;
+    if (cached) {
+        external_schema = cached;
+    } else {
+        /* Call PHP resolver: resolver(uri, base_uri) */
+        zval retval;
+        zval params[2];
+        ZVAL_STR(&params[0], uri);
+        if (ctx->base_uri) {
+            ZVAL_STR(&params[1], ctx->base_uri);
+        } else {
+            ZVAL_EMPTY_STRING(&params[1]);
+        }
+
+        zend_fcall_info fci;
+        zend_fcall_info_cache fcc;
+        if (zend_fcall_info_init(&ctx->ref_resolver, 0, &fci, &fcc, NULL, NULL) == SUCCESS) {
+            fci.param_count = 2;
+            fci.params = params;
+            fci.retval = &retval;
+
+            if (zend_call_function(&fci, &fcc) == SUCCESS) {
+                if (Z_TYPE(retval) == IS_ARRAY) {
+                    /* Cache the resolved schema */
+                    if (!ctx->resolved_schemas) {
+                        ALLOC_HASHTABLE(ctx->resolved_schemas);
+                        zend_hash_init(ctx->resolved_schemas, 8, NULL, ZVAL_PTR_DTOR, 0);
+                    }
+                    zend_hash_add(ctx->resolved_schemas, uri, &retval);
+                    external_schema = zend_hash_find(ctx->resolved_schemas, uri);
+                } else {
+                    zval_ptr_dtor(&retval);
+                }
+            }
+        }
+    }
+
+    zend_string_release(uri);
+
+    if (!external_schema) {
+        return NULL;
+    }
+
+    /* If there's a fragment, resolve it within the external schema */
+    if (fragment && fragment[0] == '#') {
+        if (fragment[1] == '\0') {
+            return external_schema;
+        }
+        if (fragment[1] != '/') {
+            return NULL;
+        }
+
+        /* Parse JSON Pointer within external schema */
+        zval *current = external_schema;
+        const char *ptr = fragment + 2;
+
+        while (*ptr) {
+            const char *slash = strchr(ptr, '/');
+            size_t segment_len = slash ? (size_t)(slash - ptr) : strlen(ptr);
+
+            char segment[256];
+            if (segment_len >= sizeof(segment)) {
+                return NULL;
+            }
+            strncpy(segment, ptr, segment_len);
+            segment[segment_len] = '\0';
+
+            /* Decode JSON Pointer escapes */
+            char *src = segment;
+            char *dst = segment;
+            while (*src) {
+                if (*src == '~') {
+                    if (src[1] == '0') {
+                        *dst++ = '~';
+                        src += 2;
+                    } else if (src[1] == '1') {
+                        *dst++ = '/';
+                        src += 2;
+                    } else {
+                        *dst++ = *src++;
+                    }
+                } else {
+                    *dst++ = *src++;
+                }
+            }
+            *dst = '\0';
+
+            if (Z_TYPE_P(current) == IS_ARRAY) {
+                zval *next = zend_hash_str_find(Z_ARRVAL_P(current), segment, strlen(segment));
+                if (!next) {
+                    char *end;
+                    zend_long idx = strtol(segment, &end, 10);
+                    if (*end == '\0') {
+                        next = zend_hash_index_find(Z_ARRVAL_P(current), idx);
+                    }
+                }
+                if (!next) {
+                    return NULL;
+                }
+                current = next;
+            } else {
+                return NULL;
+            }
+
+            if (slash) {
+                ptr = slash + 1;
+            } else {
+                break;
+            }
+        }
+
+        return current;
+    }
+
+    return external_schema;
 }
 
 int json_schema_validate_ref(zval *data, zend_string *ref, json_schema_context *ctx)
