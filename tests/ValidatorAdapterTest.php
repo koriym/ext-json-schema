@@ -15,15 +15,11 @@ class ValidatorAdapterTest extends TestCase
 
     protected function setUp(): void
     {
-        // Load the adapter
-        require_once __DIR__ . '/../src/JsonSchema/Validator.php';
-
-        // The adapter should now be available
-        if (class_exists(\JsonSchema\ValidatorAdapter::class)) {
-            $this->validatorClass = \JsonSchema\ValidatorAdapter::class;
-        } else {
+        // ValidatorAdapter is loaded via composer autoload (files)
+        if (!class_exists(\JsonSchema\ValidatorAdapter::class)) {
             $this->markTestSkipped('ValidatorAdapter not available');
         }
+        $this->validatorClass = \JsonSchema\ValidatorAdapter::class;
     }
 
     public function testValidatorExtendsBaseConstraint(): void

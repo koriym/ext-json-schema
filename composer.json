@@ -24,9 +24,9 @@
         "justinrainbow/json-schema": "Required for ValidatorAdapter that extends BaseConstraint"
     },
     "autoload": {
-        "psr-4": {
-            "JsonSchema\\": "src/JsonSchema/"
-        }
+        "files": [
+            "src/JsonSchema/ValidatorAdapter.php"
+        ]
     },
     "autoload-dev": {
         "psr-4": {
