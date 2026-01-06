@@ -59,7 +59,7 @@ class ValidatorAdapter extends BaseConstraint
 
         // Use PECL extension if available
         if ($this->peclAvailable) {
-            return $this->validateWithPecl($value, $schema, $checkMode ?? Constraint::CHECK_MODE_NORMAL);
+            return $this->validateWithPecl($value, $schema);
         }
 
         // Fallback to parent implementation (pure PHP)
@@ -69,16 +69,13 @@ class ValidatorAdapter extends BaseConstraint
     /**
      * Validate using the PECL extension
      */
-    private function validateWithPecl(&$value, $schema, int $checkMode): int
+    private function validateWithPecl(&$value, $schema): int
     {
         // Convert schema to array if it's an object
         $schemaArray = $this->toArray($schema);
 
-        // Map check mode to PECL extension mode
-        $peclMode = $this->mapCheckMode($checkMode);
-
         // Perform validation and get errors in a single call
-        $result = \json_schema_validate_with_errors($value, $schemaArray, $peclMode);
+        $result = \json_schema_validate_with_errors($value, $schemaArray);
 
         if (!$result['valid']) {
             foreach ($result['errors'] as $error) {
@@ -103,29 +100,6 @@ class ValidatorAdapter extends BaseConstraint
             'constraint' => $error['constraint'] ?? '',
             'context' => self::ERROR_DOCUMENT_VALIDATION,
         ]]);
-    }
-
-    /**
-     * Map jsonrainbow check modes to PECL extension modes
-     */
-    private function mapCheckMode(int $checkMode): int
-    {
-        $peclMode = 0;
-
-        if (defined('JSON_SCHEMA_CHECK_MODE_TYPE_CAST') && ($checkMode & Constraint::CHECK_MODE_TYPE_CAST)) {
-            $peclMode |= \JSON_SCHEMA_CHECK_MODE_TYPE_CAST; // @codeCoverageIgnore
-        }
-        if (defined('JSON_SCHEMA_CHECK_MODE_COERCE_TYPES') && ($checkMode & Constraint::CHECK_MODE_COERCE_TYPES)) {
-            $peclMode |= \JSON_SCHEMA_CHECK_MODE_COERCE_TYPES; // @codeCoverageIgnore
-        }
-        if (defined('JSON_SCHEMA_CHECK_MODE_APPLY_DEFAULTS') && ($checkMode & Constraint::CHECK_MODE_APPLY_DEFAULTS)) {
-            $peclMode |= \JSON_SCHEMA_CHECK_MODE_APPLY_DEFAULTS; // @codeCoverageIgnore
-        }
-        if (defined('JSON_SCHEMA_CHECK_MODE_DISABLE_FORMAT') && ($checkMode & Constraint::CHECK_MODE_DISABLE_FORMAT)) {
-            $peclMode |= \JSON_SCHEMA_CHECK_MODE_DISABLE_FORMAT; // @codeCoverageIgnore
-        }
-
-        return $peclMode;
     }
 
     /**
