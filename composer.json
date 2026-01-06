@@ -1,9 +1,9 @@
 {
     "name": "koriym/ext-json-schema",
-    "description": "Bridge layer for using PECL json_schema extension with jsonrainbow/json-schema API compatibility",
+    "description": "Adapter layer for using PECL json_schema extension with jsonrainbow/json-schema API compatibility",
     "type": "library",
     "license": "MIT",
-    "keywords": ["json", "schema", "validator", "pecl", "json-schema", "bridge"],
+    "keywords": ["json-schema", "pecl"],
     "homepage": "https://github.com/koriym/ext-json-schema",
     "authors": [
         {
