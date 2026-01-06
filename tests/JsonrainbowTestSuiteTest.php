@@ -185,9 +185,14 @@ class JsonrainbowTestSuiteTest extends TestCase
         return false;
     }
 
+    /**
+     * Optional tests are not currently loaded (glob pattern only matches direct children).
+     * This method exists for future compatibility if optional tests are added.
+     */
     private static function isOptionalTest(string $filename): bool
     {
-        return strpos($filename, 'optional/') !== false;
+        // Note: Current glob pattern doesn't include optional/ subdirectory
+        return false;
     }
 
     private function loadRemotesIntoStorage(SchemaStorageInterface $storage): void
