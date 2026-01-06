@@ -1580,9 +1580,9 @@ zval *json_schema_resolve_ref(zend_string *ref, json_schema_context *ctx)
         /* Call PHP resolver: resolver(uri, base_uri) */
         zval retval;
         zval params[2];
-        ZVAL_STR(&params[0], uri);
+        ZVAL_STR_COPY(&params[0], uri);
         if (ctx->base_uri) {
-            ZVAL_STR(&params[1], ctx->base_uri);
+            ZVAL_STR_COPY(&params[1], ctx->base_uri);
         } else {
             ZVAL_EMPTY_STRING(&params[1]);
         }
@@ -1608,6 +1608,10 @@ zval *json_schema_resolve_ref(zend_string *ref, json_schema_context *ctx)
                 }
             }
         }
+
+        /* Clean up params */
+        zval_ptr_dtor(&params[0]);
+        zval_ptr_dtor(&params[1]);
     }
 
     zend_string_release(uri);
