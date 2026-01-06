@@ -29,7 +29,9 @@ Initial stable release.
 - 2178 tests passed from JSON Schema Test Suite
 - Procedural API: json_schema_validate(), json_schema_get_errors()
 - OOP API: JsonSchema\Validator class
-- Compatibility layer for jsonrainbow/json-schema
+
+Note: PHP compatibility layer for jsonrainbow/json-schema is available
+separately via Composer (see https://github.com/koriym/ext-json-schema)
  </notes>
  <contents>
   <dir name="/">
