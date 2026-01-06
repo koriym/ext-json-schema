@@ -77,14 +77,11 @@ class ValidatorAdapter extends BaseConstraint
         // Map check mode to PECL extension mode
         $peclMode = $this->mapCheckMode($checkMode);
 
-        // Perform validation using the PECL extension
-        $isValid = \json_schema_validate($value, $schemaArray, $peclMode);
+        // Perform validation and get errors in a single call
+        $result = \json_schema_validate_with_errors($value, $schemaArray, $peclMode);
 
-        if (!$isValid) {
-            // Get detailed errors from the PECL extension
-            $peclErrors = \json_schema_get_errors($value, $schemaArray, $peclMode);
-
-            foreach ($peclErrors as $error) {
+        if (!$result['valid']) {
+            foreach ($result['errors'] as $error) {
                 $this->addErrorFromPecl($error);
             }
 
@@ -103,7 +100,7 @@ class ValidatorAdapter extends BaseConstraint
             'property' => $error['property'] ?? '',
             'pointer' => $error['pointer'] ?? '',
             'message' => $error['message'] ?? 'Validation error',
-            'constraint' => $error['constraint'] ?? [],
+            'constraint' => $error['constraint'] ?? '',
             'context' => self::ERROR_DOCUMENT_VALIDATION,
         ]]);
     }
