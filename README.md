@@ -2,7 +2,7 @@
 
 High-performance JSON Schema validator for PHP as a PECL extension.
 
-[![Build and Test](https://github.com/koriym/ext-json-schema/actions/workflows/build.yml/badge.svg)](https://github.com/koriym/ext-json-schema/actions/workflows/build.yml)
+[![Build and Test PHP Extension](https://github.com/koriym/ext-json-schema/actions/workflows/build.yml/badge.svg?branch=1.x)](https://github.com/koriym/ext-json-schema/actions/workflows/build.yml)
 
 ## Features
 
