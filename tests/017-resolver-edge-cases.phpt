@@ -73,9 +73,16 @@ $validator->setRefResolver(function(string $uri, string $baseUri) use ($circular
     return $circularSchemas[$uri] ?? null;
 });
 $schema = ['$ref' => 'schema-a.json'];
-$data = ['b' => ['a' => ['b' => []]]];
+
+// Valid nested data should pass (use stdClass for empty objects)
+$data = ['b' => ['a' => ['b' => new stdClass()]]];
 $result = $validator->validate($data, $schema);
-echo "Circular refs handled: PASS\n";
+echo "Valid nested data: " . ($result ? "PASS" : "FAIL") . "\n";
+
+// Invalid data (wrong type) should fail
+$data = ['b' => 'not an object'];
+$result = $validator->validate($data, $schema);
+echo "Invalid type rejected: " . (!$result ? "PASS" : "FAIL") . "\n";
 
 // Test 7: Clear resolver with null
 echo "\nTest 7: Clear resolver with null\n";
@@ -103,7 +110,8 @@ Test 5: Resolver throwing exception
 Exception propagated: Resolver error
 
 Test 6: Circular external refs
-Circular refs handled: PASS
+Valid nested data: PASS
+Invalid type rejected: PASS
 
 Test 7: Clear resolver with null
 Cleared resolver handled: PASS
