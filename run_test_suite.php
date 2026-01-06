@@ -95,15 +95,6 @@ function schemaToArray($schema) {
     return $schema;
 }
 
-/**
- * Keep data as-is to preserve object/array distinction
- * stdClass objects remain objects, arrays remain arrays
- */
-function dataToPhp($data) {
-    // Keep objects as stdClass to preserve object/array distinction
-    // The validator should handle both stdClass and associative arrays
-    return $data;
-}
 
 foreach ($drafts as $draft) {
     $draftDir = "$testSuiteDir/$draft";
@@ -172,8 +163,8 @@ foreach ($drafts as $draft) {
                 }
 
                 $totalTests++;
-                // Convert data, preserving object/array distinction
-                $data = dataToPhp($test->data);
+                // Keep data as-is (stdClass objects) to preserve object/array distinction
+                $data = $test->data;
                 $expectedValid = $test->valid;
 
                 $result = json_schema_validate($data, $schema);

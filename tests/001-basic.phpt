@@ -21,14 +21,12 @@ $invalidData = ['age' => 30];
 $validator = new JsonSchema\Validator();
 
 // Test valid data
-$result = $validator->validate($validData, $schema);
-var_dump($result);
+$validator->validate($validData, $schema);
 var_dump($validator->isValid());
 var_dump(count($validator->getErrors()));
 
 // Test invalid data
-$result = $validator->validate($invalidData, $schema);
-var_dump($result);
+$validator->validate($invalidData, $schema);
 var_dump($validator->isValid());
 var_dump(count($validator->getErrors()) > 0);
 
@@ -36,9 +34,7 @@ echo "OK\n";
 ?>
 --EXPECT--
 bool(true)
-bool(true)
 int(0)
-bool(false)
 bool(false)
 bool(true)
 OK

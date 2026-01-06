@@ -53,7 +53,7 @@ add_custom_target(configure
 
 # Create a library from source files (but exclude from ALL build)
 # link https://cmake.org/cmake/help/latest/command/add_library.html
-add_library(___ EXCLUDE_FROM_ALL ${SOURCE_FILES})
+add_library(json_schema_lib EXCLUDE_FROM_ALL ${SOURCE_FILES})
 
 # Set the behavior of CMake's CMP0115 policy. The new policy executes add_executable() or add_library()
 # even if source files don't exist, but generates an error if the generated build can't find those files.

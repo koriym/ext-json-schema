@@ -155,7 +155,7 @@ class ValidatorAdapter extends BaseConstraint
     /**
      * @deprecated Use validate() instead
      */
-    public function check($value, $schema): int
+    public function check(&$value, $schema): int
     {
         return $this->validate($value, $schema);
     }
