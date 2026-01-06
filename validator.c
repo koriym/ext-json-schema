@@ -1455,6 +1455,97 @@ int json_schema_validate_if_then_else(zval *data, zval *if_schema, zval *then_sc
  * $ref Resolution
  * ========================================================================== */
 
+/*
+ * Resolve a JSON Pointer within a JSON value.
+ * pointer should be the part after "#/" (e.g., "definitions/Foo" for "#/definitions/Foo")
+ * Returns NULL if resolution fails.
+ */
+static zval *resolve_json_pointer(zval *root, const char *pointer)
+{
+    if (!root || !pointer) {
+        return NULL;
+    }
+
+    zval *current = root;
+    const char *ptr = pointer;
+
+    while (*ptr) {
+        const char *slash = strchr(ptr, '/');
+        size_t segment_len = slash ? (size_t)(slash - ptr) : strlen(ptr);
+
+        char segment[256];
+        if (segment_len >= sizeof(segment)) {
+            return NULL;
+        }
+        strncpy(segment, ptr, segment_len);
+        segment[segment_len] = '\0';
+
+        /* Decode percent-encoding first, then JSON Pointer escapes */
+        char *src = segment;
+        char *dst = segment;
+
+        /* Decode percent-encoding */
+        while (*src) {
+            if (*src == '%' && src[1] != '\0' && src[2] != '\0' &&
+                isxdigit((unsigned char)src[1]) && isxdigit((unsigned char)src[2])) {
+                int high = (src[1] >= 'a') ? (src[1] - 'a' + 10) : ((src[1] >= 'A') ? (src[1] - 'A' + 10) : (src[1] - '0'));
+                int low = (src[2] >= 'a') ? (src[2] - 'a' + 10) : ((src[2] >= 'A') ? (src[2] - 'A' + 10) : (src[2] - '0'));
+                *dst++ = (char)((high << 4) | low);
+                src += 3;
+            } else {
+                *dst++ = *src++;
+            }
+        }
+        *dst = '\0';
+
+        /* Decode JSON Pointer escapes (~0 = ~, ~1 = /) */
+        src = segment;
+        dst = segment;
+        while (*src) {
+            if (*src == '~') {
+                if (src[1] == '0') {
+                    *dst++ = '~';
+                    src += 2;
+                } else if (src[1] == '1') {
+                    *dst++ = '/';
+                    src += 2;
+                } else {
+                    *dst++ = *src++;
+                }
+            } else {
+                *dst++ = *src++;
+            }
+        }
+        *dst = '\0';
+
+        if (Z_TYPE_P(current) == IS_ARRAY) {
+            zval *next = zend_hash_str_find(Z_ARRVAL_P(current), segment, strlen(segment));
+            if (!next) {
+                /* Try numeric index */
+                char *end;
+                zend_long idx = strtol(segment, &end, 10);
+                if (*end == '\0') {
+                    next = zend_hash_index_find(Z_ARRVAL_P(current), idx);
+                }
+            }
+            if (!next) {
+                return NULL;
+            }
+            current = next;
+        } else {
+            return NULL;
+        }
+
+        if (slash) {
+            ptr = slash + 1;
+        } else {
+            break;
+        }
+    }
+
+    return current;
+}
+
 zval *json_schema_resolve_ref(zend_string *ref, json_schema_context *ctx)
 {
     if (!ctx->root_schema) {
@@ -1473,84 +1564,7 @@ zval *json_schema_resolve_ref(zend_string *ref, json_schema_context *ctx)
             return NULL;
         }
 
-        /* Parse JSON Pointer */
-        zval *current = ctx->root_schema;
-        const char *ptr = ref_str + 2;
-
-        while (*ptr) {
-            const char *slash = strchr(ptr, '/');
-            size_t segment_len = slash ? (size_t)(slash - ptr) : strlen(ptr);
-
-            char segment[256];
-            if (segment_len >= sizeof(segment)) {
-                return NULL;
-            }
-            strncpy(segment, ptr, segment_len);
-            segment[segment_len] = '\0';
-
-            /* Decode percent-encoding first, then JSON Pointer escapes */
-            char *src = segment;
-            char *dst = segment;
-
-            /* Decode percent-encoding */
-            while (*src) {
-                if (*src == '%' && isxdigit((unsigned char)src[1]) && isxdigit((unsigned char)src[2])) {
-                    int high = (src[1] >= 'a') ? (src[1] - 'a' + 10) : ((src[1] >= 'A') ? (src[1] - 'A' + 10) : (src[1] - '0'));
-                    int low = (src[2] >= 'a') ? (src[2] - 'a' + 10) : ((src[2] >= 'A') ? (src[2] - 'A' + 10) : (src[2] - '0'));
-                    *dst++ = (char)((high << 4) | low);
-                    src += 3;
-                } else {
-                    *dst++ = *src++;
-                }
-            }
-            *dst = '\0';
-
-            /* Decode JSON Pointer escapes (~0 = ~, ~1 = /) */
-            src = segment;
-            dst = segment;
-            while (*src) {
-                if (*src == '~') {
-                    if (src[1] == '0') {
-                        *dst++ = '~';
-                        src += 2;
-                    } else if (src[1] == '1') {
-                        *dst++ = '/';
-                        src += 2;
-                    } else {
-                        *dst++ = *src++;
-                    }
-                } else {
-                    *dst++ = *src++;
-                }
-            }
-            *dst = '\0';
-
-            if (Z_TYPE_P(current) == IS_ARRAY) {
-                zval *next = zend_hash_str_find(Z_ARRVAL_P(current), segment, strlen(segment));
-                if (!next) {
-                    /* Try numeric index */
-                    char *end;
-                    zend_long idx = strtol(segment, &end, 10);
-                    if (*end == '\0') {
-                        next = zend_hash_index_find(Z_ARRVAL_P(current), idx);
-                    }
-                }
-                if (!next) {
-                    return NULL;
-                }
-                current = next;
-            } else {
-                return NULL;
-            }
-
-            if (slash) {
-                ptr = slash + 1;
-            } else {
-                break;
-            }
-        }
-
-        return current;
+        return resolve_json_pointer(ctx->root_schema, ref_str + 2);
     }
 
     /* External reference - use PHP callback resolver */
@@ -1629,66 +1643,7 @@ zval *json_schema_resolve_ref(zend_string *ref, json_schema_context *ctx)
             return NULL;
         }
 
-        /* Parse JSON Pointer within external schema */
-        zval *current = external_schema;
-        const char *ptr = fragment + 2;
-
-        while (*ptr) {
-            const char *slash = strchr(ptr, '/');
-            size_t segment_len = slash ? (size_t)(slash - ptr) : strlen(ptr);
-
-            char segment[256];
-            if (segment_len >= sizeof(segment)) {
-                return NULL;
-            }
-            strncpy(segment, ptr, segment_len);
-            segment[segment_len] = '\0';
-
-            /* Decode JSON Pointer escapes */
-            char *src = segment;
-            char *dst = segment;
-            while (*src) {
-                if (*src == '~') {
-                    if (src[1] == '0') {
-                        *dst++ = '~';
-                        src += 2;
-                    } else if (src[1] == '1') {
-                        *dst++ = '/';
-                        src += 2;
-                    } else {
-                        *dst++ = *src++;
-                    }
-                } else {
-                    *dst++ = *src++;
-                }
-            }
-            *dst = '\0';
-
-            if (Z_TYPE_P(current) == IS_ARRAY) {
-                zval *next = zend_hash_str_find(Z_ARRVAL_P(current), segment, strlen(segment));
-                if (!next) {
-                    char *end;
-                    zend_long idx = strtol(segment, &end, 10);
-                    if (*end == '\0') {
-                        next = zend_hash_index_find(Z_ARRVAL_P(current), idx);
-                    }
-                }
-                if (!next) {
-                    return NULL;
-                }
-                current = next;
-            } else {
-                return NULL;
-            }
-
-            if (slash) {
-                ptr = slash + 1;
-            } else {
-                break;
-            }
-        }
-
-        return current;
+        return resolve_json_pointer(external_schema, fragment + 2);
     }
 
     return external_schema;

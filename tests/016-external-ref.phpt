@@ -5,7 +5,7 @@ json_schema
 --FILE--
 <?php
 
-// Simulated external schemas
+// Simulated external schemas (including relative paths)
 $externalSchemas = [
     'types.json' => [
         'definitions' => [
@@ -26,6 +26,23 @@ $externalSchemas = [
             'age' => ['$ref' => 'types.json#/definitions/positiveInteger']
         ],
         'required' => ['name', 'age']
+    ],
+    // Relative path schemas
+    '/schemas/v1/common/string-types.json' => [
+        'definitions' => [
+            'nonEmptyString' => [
+                'type' => 'string',
+                'minLength' => 1
+            ]
+        ]
+    ],
+    '/schemas/v1/models/product.json' => [
+        'type' => 'object',
+        'properties' => [
+            'name' => ['$ref' => '../common/string-types.json#/definitions/nonEmptyString'],
+            'price' => ['type' => 'number', 'minimum' => 0]
+        ],
+        'required' => ['name', 'price']
     ]
 ];
 
@@ -95,6 +112,45 @@ $schema = ['$ref' => 'user.json'];
 $data = ['name' => 'Test', 'age' => 1];
 $validator->validate($data, $schema);
 
+// Test 6: Relative path resolution (./foo.json, ../bar.json)
+echo "\nTest 6: Relative path resolution\n";
+$validator3 = new JsonSchema\Validator();
+$validator3->setBaseUri('/schemas/v1/models/');
+$validator3->setRefResolver(function(string $uri, string $baseUri) use ($externalSchemas) {
+    // Resolve relative paths
+    if (str_starts_with($uri, './') || str_starts_with($uri, '../')) {
+        // Simple path resolution: combine baseUri with relative path
+        $basePath = rtrim($baseUri, '/');
+        $parts = explode('/', $basePath);
+
+        $relParts = explode('/', $uri);
+        foreach ($relParts as $part) {
+            if ($part === '..') {
+                array_pop($parts);
+            } elseif ($part !== '.' && $part !== '') {
+                $parts[] = $part;
+            }
+        }
+        $resolved = implode('/', $parts);
+        echo "Resolved: $uri -> $resolved\n";
+        return $externalSchemas[$resolved] ?? null;
+    }
+
+    // Absolute path
+    return $externalSchemas[$uri] ?? null;
+});
+
+// Test with schema that uses relative $ref internally
+$schema = ['$ref' => '/schemas/v1/models/product.json'];
+$data = ['name' => 'Widget', 'price' => 9.99];
+$result = $validator3->validate($data, $schema);
+echo "Valid product: " . ($result ? "PASS" : "FAIL") . "\n";
+
+// Test invalid data (empty name violates minLength: 1)
+$data = ['name' => '', 'price' => 9.99];
+$result = $validator3->validate($data, $schema);
+echo "Empty name rejected: " . (!$result ? "PASS" : "FAIL") . "\n";
+
 echo "\nAll tests completed!\n";
 ?>
 --EXPECT--
@@ -115,5 +171,11 @@ No resolver returns error: PASS
 Test 5: Base URI
 Resolver called with baseUri: /schemas/v1/
 Resolver called with baseUri: /schemas/v1/
+
+Test 6: Relative path resolution
+Resolved: ../common/string-types.json -> /schemas/v1/common/string-types.json
+Valid product: PASS
+Resolved: ../common/string-types.json -> /schemas/v1/common/string-types.json
+Empty name rejected: PASS
 
 All tests completed!
