@@ -237,16 +237,34 @@ class ValidatorAdapterTest extends TestCase
         $this->assertEquals(0, $validator->numErrors());
     }
 
-    public function testCheckMethodExists(): void
+    public function testCheckMethodWorks(): void
     {
         $validator = new $this->validatorClass();
-        $this->assertTrue(method_exists($validator, 'check'));
+        $data = json_decode('{"name": "John"}');
+        $schema = json_decode('{"type": "object", "properties": {"name": {"type": "string"}}}');
+
+        $result = $validator->check($data, $schema);
+        $this->assertEquals(0, $result);
     }
 
-    public function testCoerceMethodExists(): void
+    public function testCoerceMethodWorks(): void
     {
         $validator = new $this->validatorClass();
-        $this->assertTrue(method_exists($validator, 'coerce'));
+        $data = json_decode('{"name": "John"}');
+        $schema = json_decode('{"type": "object", "properties": {"name": {"type": "string"}}}');
+
+        $result = $validator->coerce($data, $schema);
+        $this->assertEquals(0, $result);
+    }
+
+    public function testValidateWithNullSchema(): void
+    {
+        $validator = new $this->validatorClass();
+        $data = json_decode('{"name": "John"}');
+
+        $result = $validator->validate($data, null);
+        $this->assertEquals(0, $result);
+        $this->assertTrue($validator->isValid());
     }
 
     public function testErrorNoneConstant(): void
