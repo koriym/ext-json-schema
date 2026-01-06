@@ -36,55 +36,21 @@ jobs:
           ./configure
           make
 
-      - name: Run tests
+      - name: Run PHPT tests
         id: run_tests
         run: make test
-        continue-on-error: true
 
-      - name: Run demo with debug logging
-        id: run_demo
-        run: |
-          php -dextension=./modules/json_schema.so -i | grep json_schema
-          timeout 60s php -dextension=./modules/json_schema.so -dmemory_limit=128M -dreport_memleaks=1 -dzend.assertions=1 -dassert.exception=1 smoke.php
-        continue-on-error: true
+      - name: Run JSON Schema Test Suite
+        run: php -dextension=./modules/json_schema.so run_test_suite.php
 
-      - name: Run Valgrind memory check
-        if: steps.run_tests.outcome == 'failure' || steps.run_demo.outcome == 'failure'
-        run: |
-          cat << EOF > valgrind.supp
-          {
-             <insert_a_suppression_name_here>
-             Memcheck:Leak
-             match-leak-kinds: reachable
-             ...
-             fun:php_module_startup
-             ...
-          }
-          EOF
-          valgrind --suppressions=valgrind.supp --leak-check=full --show-leak-kinds=all --track-origins=yes --verbose --log-file=valgrind-out.txt php -dextension=./modules/json_schema.so smoke.php
+      - name: Install Composer dependencies
+        run: composer install --no-progress
 
-      - name: Check Valgrind results
-        if: steps.run_tests.outcome == 'failure' || steps.run_demo.outcome == 'failure'
-        run: |
-          if [ -f valgrind-out.txt ]; then
-            echo "Valgrind log found:"
-            cat valgrind-out.txt
-            if ! grep -q "ERROR SUMMARY: 0 errors from 0 contexts" valgrind-out.txt; then
-              echo "Valgrind found errors"
-              exit 1
-            fi
-          else
-            echo "Valgrind log not found. This is unexpected."
-            exit 1
-          fi
+      - name: Run PHPUnit tests
+        run: php -dextension=./modules/json_schema.so vendor/bin/phpunit
 
-      - name: Upload Valgrind log file
-        if: (steps.run_tests.outcome == 'failure' || steps.run_demo.outcome == 'failure') && always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: valgrind-log-${{ matrix.php-version }}
-          path: valgrind-out.txt
-          if-no-files-found: warn
+      - name: Run smoke test
+        run: php -dextension=./modules/json_schema.so smoke.php
 
       - name: Upload test logs
         if: failure()
@@ -95,11 +61,3 @@ jobs:
             tests/*.log
             tests/*.sh
           if-no-files-found: warn
-
-      - name: Final status check
-        if: always()
-        run: |
-          if [ "${{ steps.run_tests.outcome }}" == "failure" ] || [ "${{ steps.run_demo.outcome }}" == "failure" ]; then
-            echo "Tests or demo run failed. Please check the logs for more information."
-            exit 1
-          fi
