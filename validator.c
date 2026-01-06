@@ -32,9 +32,9 @@ json_schema_context *json_schema_context_create(int check_mode)
     return ctx;
 }
 
-void json_schema_context_free(json_schema_context *ctx)
+/* Helper to free a chain of error nodes */
+static void json_schema_free_error_chain(json_schema_error *error)
 {
-    json_schema_error *error = ctx->errors;
     while (error) {
         json_schema_error *next = error->next;
         if (error->message) zend_string_release(error->message);
@@ -43,6 +43,11 @@ void json_schema_context_free(json_schema_context *ctx)
         efree(error);
         error = next;
     }
+}
+
+void json_schema_context_free(json_schema_context *ctx)
+{
+    json_schema_free_error_chain(ctx->errors);
     if (ctx->current_path) {
         zend_string_release(ctx->current_path);
     }
@@ -73,17 +78,9 @@ void json_schema_context_truncate_errors(json_schema_context *ctx, int target_co
         return;
     }
 
-    if (target_count == 0) {
-        /* Free all errors */
-        json_schema_error *error = ctx->errors;
-        while (error) {
-            json_schema_error *next = error->next;
-            if (error->message) zend_string_release(error->message);
-            if (error->property) zend_string_release(error->property);
-            if (error->pointer) zend_string_release(error->pointer);
-            efree(error);
-            error = next;
-        }
+    /* Guard against negative target_count */
+    if (target_count <= 0) {
+        json_schema_free_error_chain(ctx->errors);
         ctx->errors = NULL;
         ctx->errors_tail = NULL;
         ctx->error_count = 0;
@@ -101,15 +98,7 @@ void json_schema_context_truncate_errors(json_schema_context *ctx, int target_co
         json_schema_error *to_free = current->next;
         current->next = NULL;
         ctx->errors_tail = current;
-
-        while (to_free) {
-            json_schema_error *next = to_free->next;
-            if (to_free->message) zend_string_release(to_free->message);
-            if (to_free->property) zend_string_release(to_free->property);
-            if (to_free->pointer) zend_string_release(to_free->pointer);
-            efree(to_free);
-            to_free = next;
-        }
+        json_schema_free_error_chain(to_free);
     }
 
     ctx->error_count = target_count;
