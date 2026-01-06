@@ -39,7 +39,12 @@ jobs:
 
       - name: Run PHPT tests
         id: run_tests
-        run: make test
+        run: make test TESTS=tests/
+
+      - name: Run memory leak tests with Valgrind
+        run: |
+          USE_ZEND_ALLOC=0 ZEND_DONT_UNLOAD_MODULES=1 \
+          make test TESTS=tests/ TEST_PHP_ARGS="-m"
 
       - name: Run JSON Schema Test Suite
         run: php -dextension=./modules/json_schema.so run_test_suite.php
