@@ -1,0 +1,15 @@
+# Exclude from export (pecl package / git archive)
+.github/            export-ignore
+.gitattributes      export-ignore
+.gitignore          export-ignore
+.gitmodules         export-ignore
+.idea/              export-ignore
+JSON-Schema-Test-Suite/ export-ignore
+jsonrainbow-tests/  export-ignore
+vendor/             export-ignore
+composer.json       export-ignore
+composer.lock       export-ignore
+build.sh            export-ignore
+smoke.php           export-ignore
+run_test_suite.php  export-ignore
+CMakeLists.txt      export-ignore

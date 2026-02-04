@@ -1,0 +1,82 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<package packagerversion="1.10.15" version="2.0" xmlns="http://pear.php.net/dtd/package-2.0" xmlns:tasks="http://pear.php.net/dtd/tasks-1.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://pear.php.net/dtd/tasks-1.0 http://pear.php.net/dtd/tasks-1.0.xsd http://pear.php.net/dtd/package-2.0 http://pear.php.net/dtd/package-2.0.xsd">
+ <name>json_schema</name>
+ <channel>pecl.php.net</channel>
+ <summary>High-performance JSON Schema validator</summary>
+ <description>
+  A native C implementation of JSON Schema validation for PHP.
+  Supports JSON Schema Draft-04, Draft-06, and Draft-07.
+  Passes 100% of the official JSON Schema Test Suite (2178/2178 tests).
+  Provides API compatible with jsonrainbow/json-schema.
+ </description>
+ <lead>
+  <name>Akihito Koriyama</name>
+  <user>koriym</user>
+  <email>koriym@gmail.com</email>
+  <active>yes</active>
+ </lead>
+ <date>2025-01-01</date>
+ <time>00:00:00</time>
+ <version>
+  <release>1.0.0</release>
+  <api>1.0.0</api>
+ </version>
+ <stability>
+  <release>stable</release>
+  <api>stable</api>
+ </stability>
+ <license uri="https://opensource.org/licenses/MIT">MIT</license>
+ <notes>
+  - Initial release
+  - JSON Schema Draft-04, Draft-06, Draft-07 support
+  - 2178/2178 official JSON Schema Test Suite tests passed
+  - jsonrainbow/json-schema compatible API
+  - Procedural and OOP APIs
+  - Memory leak free (Valgrind verified)
+ </notes>
+ <contents>
+  <dir name="/">
+   <file name="config.m4" role="src" />
+   <file name="config.w32" role="src" />
+   <file name="json_schema.c" role="src" />
+   <file name="validator.c" role="src" />
+   <file name="php_json_schema.h" role="src" />
+   <file name="validator.h" role="src" />
+   <file name="Makefile.frag" role="src" />
+   <file name="README.md" role="doc" />
+   <file name="LICENSE" role="doc" />
+   <file name="CREDITS" role="doc" />
+   <file name="CHANGELOG.md" role="doc" />
+   <file name="tests/001-basic.phpt" role="test" />
+   <file name="tests/002-type-validation.phpt" role="test" />
+   <file name="tests/003-string-constraints.phpt" role="test" />
+   <file name="tests/004-number-constraints.phpt" role="test" />
+   <file name="tests/005-array-constraints.phpt" role="test" />
+   <file name="tests/006-object-constraints.phpt" role="test" />
+   <file name="tests/007-enum-const.phpt" role="test" />
+   <file name="tests/008-combinators.phpt" role="test" />
+   <file name="tests/009-format.phpt" role="test" />
+   <file name="tests/010-ref.phpt" role="test" />
+   <file name="tests/011-if-then-else.phpt" role="test" />
+   <file name="tests/012-validator-class.phpt" role="test" />
+   <file name="tests/013-constraint-constants.phpt" role="test" />
+   <file name="tests/014-procedural-api.phpt" role="test" />
+   <file name="tests/015-boolean-schema.phpt" role="test" />
+  </dir>
+ </contents>
+ <dependencies>
+  <required>
+   <php>
+    <min>8.1.0</min>
+   </php>
+   <pearinstaller>
+    <min>1.10.0</min>
+   </pearinstaller>
+   <extension>
+    <name>json</name>
+   </extension>
+  </required>
+ </dependencies>
+ <providesextension>json_schema</providesextension>
+ <extsrcrelease />
+</package>
