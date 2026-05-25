@@ -7,8 +7,9 @@ High-performance JSON Schema validator for PHP as a PECL extension.
 ## Features
 
 - **JSON Schema Draft-04/06/07** support
-- **2178 tests passed** from [JSON Schema Test Suite](https://github.com/json-schema-org/JSON-Schema-Test-Suite)
+- **2365/2365 tests passed** from [JSON Schema Test Suite](https://github.com/json-schema-org/JSON-Schema-Test-Suite) (0 skipped)
 - **[jsonrainbow/json-schema](https://github.com/jsonrainbow/json-schema) compatible** API
+- Complete Draft-04/06/07 `$ref` support with local, relative, absolute, URN, anchor, and resolver-backed remote references
 - Native C implementation for performance
 
 ## Requirements
@@ -60,6 +61,19 @@ $schema = [
 if (json_schema_validate($data, $schema)) {
     echo "Valid!";
 }
+```
+
+For remote references, provide a resolver callback through the optional options array:
+
+```php
+$valid = json_schema_validate($data, $schema, JsonSchema\Constraint::CHECK_MODE_NORMAL, [
+    'baseUri' => 'http://example.com/schemas/root.json',
+    'draft' => 'draft7',
+    'resolver' => static function (string $uri, string $baseUri, string $rawRef): array|bool|null {
+        // Return the schema for $uri, or null when it cannot be resolved.
+        return $schemas[$uri] ?? null;
+    },
+]);
 ```
 
 ### OOP API
@@ -120,14 +134,26 @@ Errors match jsonrainbow/json-schema format:
 | Reference | `$ref`, `definitions`, `$defs` |
 | Other | `enum`, `const` |
 
+## Support Status
+
+| Area | Status |
+|------|--------|
+| Drafts | Draft-04, Draft-06, Draft-07 |
+| Local `$ref` | JSON Pointer, empty pointer tokens, anchors / plain-name fragments |
+| URI `$ref` | Relative URI, absolute URI, absolute-path reference, URN, dot-segment normalization |
+| `$id` / `id` | Draft-aware base URI changes (`id` for Draft-04, `$id` for Draft-06/07) |
+| Recursive schemas | Supported with validation depth protection |
+| Remote `$ref` | Supported through PHP resolver callback; no HTTP client is built into the extension |
+| Official Test Suite | 2365/2365 passing, 0 skipped for Draft-04/06/07 |
+
 ## Quality Assurance
 
 This extension was implemented with [Claude Code](https://claude.ai/code) (Opus 4.5) and undergoes rigorous testing:
 
 | Test | Coverage |
 |------|----------|
-| **JSON Schema Test Suite** | 2178/2178 tests passed (100%) |
-| **PHPT Unit Tests** | 15 tests covering all features |
+| **JSON Schema Test Suite** | 2365/2365 tests passed (100%, 0 skipped) |
+| **PHPT Unit Tests** | 18 tests covering all features |
 | **API Compatibility Tests** | 30 PHPUnit tests for jsonrainbow compatibility |
 | **Memory Leak Detection** | Valgrind + PHP's built-in leak detector |
 | **Multi-version Testing** | PHP 8.1, 8.2, 8.3, 8.4, 8.5 |

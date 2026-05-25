@@ -11,6 +11,7 @@
 #include "validator.h"
 #include <math.h>
 #include <ctype.h>
+#include <stdint.h>
 
 /* Path segment structure (opaque in header) */
 struct _json_schema_path_segment {
@@ -21,6 +22,343 @@ struct _json_schema_path_segment {
 
 /* Forward declarations */
 static int validate_against_schema(zval *data, zval *schema, json_schema_context *ctx);
+static void json_schema_context_index_schema(json_schema_context *ctx, zval *schema, zend_string *base_uri, int is_document_root, int depth);
+
+/* ============================================================================
+ * URI and registry helpers for $ref resolution
+ * ========================================================================== */
+
+static zend_string *json_schema_empty_string(void)
+{
+    return zend_string_init("", 0, 0);
+}
+
+static zend_string *json_schema_ptr_key(const void *ptr)
+{
+    char buf[32];
+    int len = snprintf(buf, sizeof(buf), "%p", ptr);
+    return zend_string_init(buf, len > 0 ? (size_t)len : 0, 0);
+}
+
+static int uri_has_scheme(const char *uri, size_t len)
+{
+    if (len == 0 || !isalpha((unsigned char)uri[0])) {
+        return 0;
+    }
+
+    for (size_t i = 1; i < len; i++) {
+        char c = uri[i];
+        if (c == ':') {
+            return 1;
+        }
+        if (c == '/' || c == '?' || c == '#') {
+            return 0;
+        }
+        if (!(isalnum((unsigned char)c) || c == '+' || c == '-' || c == '.')) {
+            return 0;
+        }
+    }
+
+    return 0;
+}
+
+static zend_string *uri_without_fragment(zend_string *uri)
+{
+    const char *hash = memchr(ZSTR_VAL(uri), '#', ZSTR_LEN(uri));
+    if (!hash) {
+        return zend_string_copy(uri);
+    }
+    return zend_string_init(ZSTR_VAL(uri), (size_t)(hash - ZSTR_VAL(uri)), 0);
+}
+
+static zend_string *uri_fragment(zend_string *uri)
+{
+    const char *hash = memchr(ZSTR_VAL(uri), '#', ZSTR_LEN(uri));
+    if (!hash) {
+        return NULL;
+    }
+    return zend_string_init(hash + 1, ZSTR_LEN(uri) - (size_t)(hash - ZSTR_VAL(uri)) - 1, 0);
+}
+
+static zend_string *uri_scheme_authority_prefix(zend_string *base_doc)
+{
+    const char *s = ZSTR_VAL(base_doc);
+    size_t len = ZSTR_LEN(base_doc);
+
+    if (!uri_has_scheme(s, len)) {
+        return json_schema_empty_string();
+    }
+
+    const char *colon = memchr(s, ':', len);
+    if (!colon) {
+        return json_schema_empty_string();
+    }
+
+    size_t prefix_len = (size_t)(colon - s) + 1;
+    if (prefix_len + 2 <= len && s[prefix_len] == '/' && s[prefix_len + 1] == '/') {
+        size_t i = prefix_len + 2;
+        while (i < len && s[i] != '/' && s[i] != '?' && s[i] != '#') {
+            i++;
+        }
+        prefix_len = i;
+    }
+
+    return zend_string_init(s, prefix_len, 0);
+}
+
+static zend_string *uri_directory(zend_string *base_doc)
+{
+    const char *s = ZSTR_VAL(base_doc);
+    size_t len = ZSTR_LEN(base_doc);
+    size_t end = 0;
+
+    while (end < len && s[end] != '?' && s[end] != '#') {
+        end++;
+    }
+
+    if (end == 0) {
+        return json_schema_empty_string();
+    }
+
+    const char *slash = NULL;
+    for (size_t i = 0; i < end; i++) {
+        if (s[i] == '/') {
+            slash = s + i;
+        }
+    }
+
+    if (!slash) {
+        if (uri_has_scheme(s, end)) {
+            const char *colon = memchr(s, ':', end);
+            return zend_string_init(s, (size_t)(colon - s) + 1, 0);
+        }
+        return json_schema_empty_string();
+    }
+
+    return zend_string_init(s, (size_t)(slash - s) + 1, 0);
+}
+
+static zend_string *uri_remove_dot_segments(zend_string *uri)
+{
+    const char *s = ZSTR_VAL(uri);
+    size_t len = ZSTR_LEN(uri);
+    size_t path_start = 0;
+    size_t path_end = 0;
+
+    if (uri_has_scheme(s, len)) {
+        const char *colon = memchr(s, ':', len);
+        path_start = (size_t)(colon - s) + 1;
+        if (path_start + 2 <= len && s[path_start] == '/' && s[path_start + 1] == '/') {
+            path_start += 2;
+            while (path_start < len && s[path_start] != '/' && s[path_start] != '?' && s[path_start] != '#') {
+                path_start++;
+            }
+        }
+    }
+
+    path_end = path_start;
+    while (path_end < len && s[path_end] != '?' && s[path_end] != '#') {
+        path_end++;
+    }
+
+    if (path_end <= path_start) {
+        return zend_string_copy(uri);
+    }
+
+    int absolute = s[path_start] == '/';
+    int trailing_slash = s[path_end - 1] == '/';
+    smart_str out = {0};
+
+    smart_str_appendl(&out, s, path_start);
+    if (absolute) {
+        smart_str_appendc(&out, '/');
+    }
+
+    const char *segments[256];
+    size_t seg_lens[256];
+    int seg_count = 0;
+    size_t i = path_start + (absolute ? 1 : 0);
+
+    while (i <= path_end) {
+        size_t start = i;
+        while (i < path_end && s[i] != '/') {
+            i++;
+        }
+        size_t seg_len = i - start;
+
+        if (seg_len == 0 || (seg_len == 1 && s[start] == '.')) {
+            /* skip */
+        } else if (seg_len == 2 && s[start] == '.' && s[start + 1] == '.') {
+            if (seg_count > 0) {
+                seg_count--;
+            } else if (!absolute && seg_count < 256) {
+                segments[seg_count] = s + start;
+                seg_lens[seg_count] = seg_len;
+                seg_count++;
+            }
+        } else if (seg_count < 256) {
+            segments[seg_count] = s + start;
+            seg_lens[seg_count] = seg_len;
+            seg_count++;
+        }
+
+        i++;
+    }
+
+    for (int j = 0; j < seg_count; j++) {
+        if (j > 0) {
+            smart_str_appendc(&out, '/');
+        }
+        smart_str_appendl(&out, segments[j], seg_lens[j]);
+    }
+
+    if (trailing_slash && seg_count > 0) {
+        smart_str_appendc(&out, '/');
+    }
+
+    if (path_end < len) {
+        smart_str_appendl(&out, s + path_end, len - path_end);
+    }
+
+    smart_str_0(&out);
+    return smart_str_extract(&out);
+}
+
+static zend_string *uri_resolve(zend_string *base_uri, zend_string *ref)
+{
+    zend_string *base_doc = base_uri ? uri_without_fragment(base_uri) : json_schema_empty_string();
+    zend_string *result;
+
+    if (uri_has_scheme(ZSTR_VAL(ref), ZSTR_LEN(ref))) {
+        zend_string_release(base_doc);
+        result = uri_remove_dot_segments(ref);
+        return result;
+    }
+
+    if (ZSTR_LEN(ref) == 0) {
+        return base_doc;
+    }
+
+    if (ZSTR_VAL(ref)[0] == '#') {
+        smart_str out = {0};
+        smart_str_append(&out, base_doc);
+        smart_str_append(&out, ref);
+        smart_str_0(&out);
+        zend_string_release(base_doc);
+        return smart_str_extract(&out);
+    }
+
+    if (ZSTR_VAL(ref)[0] == '/') {
+        zend_string *prefix = uri_scheme_authority_prefix(base_doc);
+        smart_str out = {0};
+        smart_str_append(&out, prefix);
+        smart_str_append(&out, ref);
+        smart_str_0(&out);
+        zend_string_release(prefix);
+        zend_string_release(base_doc);
+        result = smart_str_extract(&out);
+        zend_string *normalized = uri_remove_dot_segments(result);
+        zend_string_release(result);
+        return normalized;
+    }
+
+    zend_string *dir = uri_directory(base_doc);
+    smart_str out = {0};
+    smart_str_append(&out, dir);
+    smart_str_append(&out, ref);
+    smart_str_0(&out);
+    zend_string_release(dir);
+    zend_string_release(base_doc);
+    result = smart_str_extract(&out);
+    zend_string *normalized = uri_remove_dot_segments(result);
+    zend_string_release(result);
+    return normalized;
+}
+
+static void registry_set_schema_base(json_schema_context *ctx, zval *schema, zend_string *base_uri)
+{
+    if (!ctx->schema_base_uris) {
+        return;
+    }
+
+    zend_string *key = json_schema_ptr_key(schema);
+    zval value;
+    ZVAL_STR_COPY(&value, base_uri);
+    zend_hash_update(ctx->schema_base_uris, key, &value);
+    zend_string_release(key);
+}
+
+static zend_string *registry_get_schema_base(json_schema_context *ctx, zval *schema)
+{
+    if (ctx->schema_base_uris) {
+        zend_string *key = json_schema_ptr_key(schema);
+        zval *value = zend_hash_find(ctx->schema_base_uris, key);
+        zend_string_release(key);
+        if (value && Z_TYPE_P(value) == IS_STRING) {
+            return Z_STR_P(value);
+        }
+    }
+
+    if (ctx->base_uri) {
+        return ctx->base_uri;
+    }
+
+    return NULL;
+}
+
+static void registry_set_uri(json_schema_context *ctx, zend_string *uri, zval *schema)
+{
+    if (!ctx->schema_uri_map || !uri) {
+        return;
+    }
+
+    zval value;
+    ZVAL_LONG(&value, (zend_long)(uintptr_t)schema);
+    zend_hash_update(ctx->schema_uri_map, uri, &value);
+}
+
+static zval *registry_get_uri(json_schema_context *ctx, zend_string *uri)
+{
+    if (!ctx->schema_uri_map || !uri) {
+        return NULL;
+    }
+
+    zval *value = zend_hash_find(ctx->schema_uri_map, uri);
+    if (!value || Z_TYPE_P(value) != IS_LONG) {
+        return NULL;
+    }
+
+    return (zval *)(uintptr_t)Z_LVAL_P(value);
+}
+
+static void schema_value_to_array(zval *src, zval *dst, int depth)
+{
+    if (depth >= JSON_SCHEMA_MAX_DEPTH) {
+        ZVAL_COPY(dst, src);
+        return;
+    }
+
+    if (Z_TYPE_P(src) == IS_OBJECT || Z_TYPE_P(src) == IS_ARRAY) {
+        HashTable *ht = (Z_TYPE_P(src) == IS_OBJECT) ? Z_OBJPROP_P(src) : Z_ARRVAL_P(src);
+        zend_string *key;
+        zend_ulong idx;
+        zval *value;
+
+        array_init(dst);
+        ZEND_HASH_FOREACH_KEY_VAL(ht, idx, key, value) {
+            zval converted;
+            schema_value_to_array(value, &converted, depth + 1);
+            if (key) {
+                zend_hash_update(Z_ARRVAL_P(dst), key, &converted);
+            } else {
+                zend_hash_index_update(Z_ARRVAL_P(dst), idx, &converted);
+            }
+        } ZEND_HASH_FOREACH_END();
+        return;
+    }
+
+    ZVAL_COPY(dst, src);
+}
 
 /* ============================================================================
  * Context Management
@@ -54,6 +392,13 @@ json_schema_context *json_schema_context_create(int check_mode)
     ZVAL_UNDEF(&ctx->ref_resolver);
     ctx->base_uri = NULL;
     ctx->resolved_schemas = NULL;
+
+    /* Draft and $ref registry */
+    ctx->draft = JSON_SCHEMA_DRAFT_AUTO;
+    ALLOC_HASHTABLE(ctx->schema_base_uris);
+    zend_hash_init(ctx->schema_base_uris, 32, NULL, ZVAL_PTR_DTOR, 0);
+    ALLOC_HASHTABLE(ctx->schema_uri_map);
+    zend_hash_init(ctx->schema_uri_map, 32, NULL, NULL, 0);
 
     return ctx;
 }
@@ -99,6 +444,14 @@ void json_schema_context_free(json_schema_context *ctx)
     if (ctx->resolved_schemas) {
         zend_hash_destroy(ctx->resolved_schemas);
         FREE_HASHTABLE(ctx->resolved_schemas);
+    }
+    if (ctx->schema_base_uris) {
+        zend_hash_destroy(ctx->schema_base_uris);
+        FREE_HASHTABLE(ctx->schema_base_uris);
+    }
+    if (ctx->schema_uri_map) {
+        zend_hash_destroy(ctx->schema_uri_map);
+        FREE_HASHTABLE(ctx->schema_uri_map);
     }
 
     efree(ctx);
@@ -273,6 +626,30 @@ void json_schema_context_set_base_uri(json_schema_context *ctx, zend_string *bas
         ctx->base_uri = zend_string_copy(base_uri);
     } else {
         ctx->base_uri = NULL;
+    }
+}
+
+void json_schema_context_set_draft(json_schema_context *ctx, zend_string *draft)
+{
+    if (!draft) {
+        ctx->draft = JSON_SCHEMA_DRAFT_AUTO;
+        return;
+    }
+
+    if (zend_string_equals_literal_ci(draft, "draft4") ||
+        zend_string_equals_literal_ci(draft, "draft-04") ||
+        zend_string_equals_literal_ci(draft, "4")) {
+        ctx->draft = JSON_SCHEMA_DRAFT_04;
+    } else if (zend_string_equals_literal_ci(draft, "draft6") ||
+               zend_string_equals_literal_ci(draft, "draft-06") ||
+               zend_string_equals_literal_ci(draft, "6")) {
+        ctx->draft = JSON_SCHEMA_DRAFT_06;
+    } else if (zend_string_equals_literal_ci(draft, "draft7") ||
+               zend_string_equals_literal_ci(draft, "draft-07") ||
+               zend_string_equals_literal_ci(draft, "7")) {
+        ctx->draft = JSON_SCHEMA_DRAFT_07;
+    } else {
+        ctx->draft = JSON_SCHEMA_DRAFT_AUTO;
     }
 }
 
@@ -803,7 +1180,7 @@ int json_schema_validate_multiple_of(zval *data, zval *multiple_of, json_schema_
     double quotient = value / divisor;
     double rounded = round(quotient);
 
-    if (fabs(quotient - rounded) > 1e-10) {
+    if (!isfinite(quotient) || !isfinite(rounded) || fabs(quotient - rounded) > 1e-10) {
         char msg[256];
         snprintf(msg, sizeof(msg), "Value %g is not a multiple of %g", value, divisor);
         json_schema_context_add_error(ctx, JSON_SCHEMA_ERROR_MULTIPLE_OF, msg, NULL);
@@ -1543,150 +1920,298 @@ static zval *resolve_json_pointer(zval *root, const char *pointer)
         }
     }
 
+    /* A trailing slash denotes a final empty token (e.g. /definitions/). */
+    size_t pointer_len = strlen(pointer);
+    if (pointer_len > 1 && pointer[pointer_len - 1] == '/') {
+        if (Z_TYPE_P(current) == IS_ARRAY) {
+            zval *next = zend_hash_str_find(Z_ARRVAL_P(current), "", 0);
+            if (!next) {
+                return NULL;
+            }
+            current = next;
+        } else {
+            return NULL;
+        }
+    }
+
     return current;
 }
 
-zval *json_schema_resolve_ref(zend_string *ref, json_schema_context *ctx)
+static int schema_id_keyword_matches(json_schema_context *ctx, zend_string *key)
+{
+    if (!key) {
+        return 0;
+    }
+
+    if (ctx->draft == JSON_SCHEMA_DRAFT_04) {
+        return zend_string_equals_literal(key, "id");
+    }
+
+    if (ctx->draft == JSON_SCHEMA_DRAFT_06 || ctx->draft == JSON_SCHEMA_DRAFT_07) {
+        return zend_string_equals_literal(key, "$id");
+    }
+
+    return zend_string_equals_literal(key, "$id") || zend_string_equals_literal(key, "id");
+}
+
+static zval *schema_find_id(json_schema_context *ctx, zval *schema)
+{
+    if (Z_TYPE_P(schema) != IS_ARRAY) {
+        return NULL;
+    }
+
+    if (ctx->draft == JSON_SCHEMA_DRAFT_04) {
+        return zend_hash_str_find(Z_ARRVAL_P(schema), "id", 2);
+    }
+
+    if (ctx->draft == JSON_SCHEMA_DRAFT_06 || ctx->draft == JSON_SCHEMA_DRAFT_07) {
+        return zend_hash_str_find(Z_ARRVAL_P(schema), "$id", 3);
+    }
+
+    zval *id = zend_hash_str_find(Z_ARRVAL_P(schema), "$id", 3);
+    if (!id) {
+        id = zend_hash_str_find(Z_ARRVAL_P(schema), "id", 2);
+    }
+    return id;
+}
+
+static void detect_draft_from_schema(json_schema_context *ctx, zval *schema)
+{
+    if (ctx->draft != JSON_SCHEMA_DRAFT_AUTO || Z_TYPE_P(schema) != IS_ARRAY) {
+        return;
+    }
+
+    zval *schema_uri = zend_hash_str_find(Z_ARRVAL_P(schema), "$schema", 7);
+    if (!schema_uri || Z_TYPE_P(schema_uri) != IS_STRING) {
+        return;
+    }
+
+    if (strstr(Z_STRVAL_P(schema_uri), "draft-04")) {
+        ctx->draft = JSON_SCHEMA_DRAFT_04;
+    } else if (strstr(Z_STRVAL_P(schema_uri), "draft-06")) {
+        ctx->draft = JSON_SCHEMA_DRAFT_06;
+    } else if (strstr(Z_STRVAL_P(schema_uri), "draft-07")) {
+        ctx->draft = JSON_SCHEMA_DRAFT_07;
+    }
+}
+
+static void json_schema_context_index_schema(json_schema_context *ctx, zval *schema, zend_string *base_uri, int is_document_root, int depth)
+{
+    if (!schema || depth > JSON_SCHEMA_MAX_DEPTH) {
+        return;
+    }
+
+    zend_string *current_base = base_uri ? zend_string_copy(base_uri) : json_schema_empty_string();
+
+    registry_set_schema_base(ctx, schema, current_base);
+    if (is_document_root) {
+        zend_string *doc_uri = uri_without_fragment(current_base);
+        registry_set_uri(ctx, doc_uri, schema);
+        zend_string_release(doc_uri);
+    }
+
+    if (Z_TYPE_P(schema) == IS_TRUE || Z_TYPE_P(schema) == IS_FALSE) {
+        zend_string_release(current_base);
+        return;
+    }
+
+    if (Z_TYPE_P(schema) != IS_ARRAY) {
+        zend_string_release(current_base);
+        return;
+    }
+
+    HashTable *ht = Z_ARRVAL_P(schema);
+    zval *ref = zend_hash_str_find(ht, "$ref", 4);
+    if (ref && Z_TYPE_P(ref) == IS_STRING) {
+        zend_string_release(current_base);
+        return; /* Draft4-7: sibling keywords, including id/$id, do not apply */
+    }
+
+    zval *id = schema_find_id(ctx, schema);
+    if (id && Z_TYPE_P(id) == IS_STRING && Z_STRLEN_P(id) > 0) {
+        zend_string *resolved = uri_resolve(current_base, Z_STR_P(id));
+        zend_string *resolved_doc = uri_without_fragment(resolved);
+
+        registry_set_schema_base(ctx, schema, resolved_doc);
+        registry_set_uri(ctx, resolved, schema);
+
+        zend_string *fragment = uri_fragment(resolved);
+        if (!fragment || ZSTR_LEN(fragment) == 0) {
+            registry_set_uri(ctx, resolved_doc, schema);
+        }
+        if (fragment) {
+            zend_string_release(fragment);
+        }
+
+        zend_string_release(current_base);
+        current_base = resolved_doc;
+        zend_string_release(resolved);
+    }
+
+    zend_string *key;
+    zend_ulong idx;
+    zval *child;
+    ZEND_HASH_FOREACH_KEY_VAL(ht, idx, key, child) {
+        if (key && schema_id_keyword_matches(ctx, key)) {
+            continue;
+        }
+        if (Z_TYPE_P(child) == IS_ARRAY || Z_TYPE_P(child) == IS_TRUE || Z_TYPE_P(child) == IS_FALSE) {
+            json_schema_context_index_schema(ctx, child, current_base, 0, depth + 1);
+        }
+    } ZEND_HASH_FOREACH_END();
+
+    zend_string_release(current_base);
+}
+
+static zval *json_schema_resolver_fetch(json_schema_context *ctx, zend_string *doc_uri, zend_string *source_base, zend_string *raw_ref)
+{
+    if (Z_TYPE(ctx->ref_resolver) == IS_UNDEF) {
+        return NULL;
+    }
+
+    if (!ctx->resolved_schemas) {
+        ALLOC_HASHTABLE(ctx->resolved_schemas);
+        zend_hash_init(ctx->resolved_schemas, 8, NULL, ZVAL_PTR_DTOR, 0);
+    }
+
+    zval *cached = zend_hash_find(ctx->resolved_schemas, doc_uri);
+    if (cached) {
+        return cached;
+    }
+
+    zval retval;
+    zval params[3];
+    ZVAL_UNDEF(&retval);
+    ZVAL_STR_COPY(&params[0], doc_uri);
+    if (source_base) {
+        ZVAL_STR_COPY(&params[1], source_base);
+    } else {
+        ZVAL_EMPTY_STRING(&params[1]);
+    }
+    ZVAL_STR_COPY(&params[2], raw_ref);
+
+    zend_fcall_info fci;
+    zend_fcall_info_cache fcc;
+    zval *external_schema = NULL;
+
+    if (zend_fcall_info_init(&ctx->ref_resolver, 0, &fci, &fcc, NULL, NULL) == SUCCESS) {
+        fci.param_count = 3;
+        fci.params = params;
+        fci.retval = &retval;
+
+        if (zend_call_function(&fci, &fcc) == SUCCESS) {
+            if (Z_TYPE(retval) == IS_ARRAY || Z_TYPE(retval) == IS_OBJECT) {
+                zval normalized;
+                schema_value_to_array(&retval, &normalized, 0);
+                zval_ptr_dtor(&retval);
+                zend_hash_update(ctx->resolved_schemas, doc_uri, &normalized);
+                external_schema = zend_hash_find(ctx->resolved_schemas, doc_uri);
+                json_schema_context_index_schema(ctx, external_schema, doc_uri, 1, 0);
+                ZVAL_UNDEF(&retval);
+            } else if (Z_TYPE(retval) == IS_TRUE || Z_TYPE(retval) == IS_FALSE) {
+                zend_hash_update(ctx->resolved_schemas, doc_uri, &retval);
+                external_schema = zend_hash_find(ctx->resolved_schemas, doc_uri);
+                json_schema_context_index_schema(ctx, external_schema, doc_uri, 1, 0);
+                ZVAL_UNDEF(&retval);
+            } else if (!Z_ISUNDEF(retval)) {
+                zval_ptr_dtor(&retval);
+            }
+        }
+    }
+
+    zval_ptr_dtor(&params[0]);
+    zval_ptr_dtor(&params[1]);
+    zval_ptr_dtor(&params[2]);
+
+    return external_schema;
+}
+
+static zval *json_schema_resolve_full_uri(zend_string *full_uri, zend_string *source_base, zend_string *raw_ref, json_schema_context *ctx)
+{
+    zend_string *doc_uri = uri_without_fragment(full_uri);
+    zend_string *fragment = uri_fragment(full_uri);
+
+    zval *doc_schema = registry_get_uri(ctx, doc_uri);
+    if (!doc_schema && ZSTR_LEN(doc_uri) == 0) {
+        doc_schema = ctx->root_schema;
+    }
+
+    if (!doc_schema && Z_TYPE(ctx->ref_resolver) != IS_UNDEF) {
+        doc_schema = json_schema_resolver_fetch(ctx, doc_uri, source_base, raw_ref);
+        if (!doc_schema) {
+            zend_string *raw_doc = uri_without_fragment(raw_ref);
+            if (!zend_string_equals(raw_doc, doc_uri)) {
+                doc_schema = json_schema_resolver_fetch(ctx, raw_doc, source_base, raw_ref);
+                if (doc_schema) {
+                    json_schema_context_index_schema(ctx, doc_schema, doc_uri, 1, 0);
+                }
+            }
+            zend_string_release(raw_doc);
+        }
+    }
+
+    if (!doc_schema) {
+        if (fragment) {
+            zend_string_release(fragment);
+        }
+        zend_string_release(doc_uri);
+        return NULL;
+    }
+
+    if (!fragment || ZSTR_LEN(fragment) == 0) {
+        if (fragment) {
+            zend_string_release(fragment);
+        }
+        zend_string_release(doc_uri);
+        return doc_schema;
+    }
+
+    zval *resolved = NULL;
+    if (ZSTR_VAL(fragment)[0] == '/') {
+        resolved = resolve_json_pointer(doc_schema, ZSTR_VAL(fragment) + 1);
+    } else {
+        resolved = registry_get_uri(ctx, full_uri);
+    }
+
+    zend_string_release(fragment);
+    zend_string_release(doc_uri);
+    return resolved;
+}
+
+zval *json_schema_resolve_ref(zend_string *ref, zval *ref_schema, json_schema_context *ctx)
 {
     if (!ctx->root_schema) {
         return NULL;
     }
 
-    const char *ref_str = ZSTR_VAL(ref);
-
-    /* Handle local references (#/...) */
-    if (ref_str[0] == '#') {
-        if (ref_str[1] == '\0') {
-            return ctx->root_schema;
-        }
-
-        if (ref_str[1] != '/') {
-            return NULL;
-        }
-
-        return resolve_json_pointer(ctx->root_schema, ref_str + 2);
+    zend_string *base = registry_get_schema_base(ctx, ref_schema);
+    zend_string *empty = NULL;
+    if (!base) {
+        empty = json_schema_empty_string();
+        base = empty;
     }
 
-    /* External reference - use PHP callback resolver */
-    if (Z_TYPE(ctx->ref_resolver) == IS_UNDEF) {
-        return NULL; /* No resolver configured */
+    zend_string *full_uri = uri_resolve(base, ref);
+    zval *resolved = json_schema_resolve_full_uri(full_uri, base, ref, ctx);
+
+    zend_string_release(full_uri);
+    if (empty) {
+        zend_string_release(empty);
     }
-
-    /* Split URI and fragment: "other.json#/definitions/Foo" -> uri="other.json", fragment="/definitions/Foo" */
-    const char *fragment = strchr(ref_str, '#');
-    zend_string *uri;
-    if (fragment) {
-        uri = zend_string_init(ref_str, fragment - ref_str, 0);
-    } else {
-        uri = zend_string_copy(ref);
-    }
-
-    /* Check cache first */
-    zval *cached = NULL;
-    if (ctx->resolved_schemas) {
-        cached = zend_hash_find(ctx->resolved_schemas, uri);
-    }
-
-    zval *external_schema = NULL;
-    if (cached) {
-        external_schema = cached;
-    } else {
-        /* Call PHP resolver: resolver(uri, base_uri) */
-        zval retval;
-        zval params[2];
-        ZVAL_STR_COPY(&params[0], uri);
-        if (ctx->base_uri) {
-            ZVAL_STR_COPY(&params[1], ctx->base_uri);
-        } else {
-            ZVAL_EMPTY_STRING(&params[1]);
-        }
-
-        zend_fcall_info fci;
-        zend_fcall_info_cache fcc;
-        if (zend_fcall_info_init(&ctx->ref_resolver, 0, &fci, &fcc, NULL, NULL) == SUCCESS) {
-            fci.param_count = 2;
-            fci.params = params;
-            fci.retval = &retval;
-
-            if (zend_call_function(&fci, &fcc) == SUCCESS) {
-                if (Z_TYPE(retval) == IS_ARRAY) {
-                    /* Cache the resolved schema */
-                    if (!ctx->resolved_schemas) {
-                        ALLOC_HASHTABLE(ctx->resolved_schemas);
-                        zend_hash_init(ctx->resolved_schemas, 8, NULL, ZVAL_PTR_DTOR, 0);
-                    }
-                    zend_hash_add(ctx->resolved_schemas, uri, &retval);
-                    external_schema = zend_hash_find(ctx->resolved_schemas, uri);
-                } else {
-                    zval_ptr_dtor(&retval);
-                }
-            }
-        }
-
-        /* Clean up params */
-        zval_ptr_dtor(&params[0]);
-        zval_ptr_dtor(&params[1]);
-    }
-
-    zend_string_release(uri);
-
-    if (!external_schema) {
-        return NULL;
-    }
-
-    /* If there's a fragment, resolve it within the external schema */
-    if (fragment && fragment[0] == '#') {
-        if (fragment[1] == '\0') {
-            return external_schema;
-        }
-        if (fragment[1] != '/') {
-            return NULL;
-        }
-
-        return resolve_json_pointer(external_schema, fragment + 2);
-    }
-
-    return external_schema;
+    return resolved;
 }
 
-int json_schema_validate_ref(zval *data, zend_string *ref, json_schema_context *ctx)
+int json_schema_validate_ref(zval *data, zend_string *ref, zval *ref_schema, json_schema_context *ctx)
 {
-    /*
-     * Cycle detection for $ref resolution.
-     * Root references ("#") are allowed to recurse since data will eventually terminate.
-     * Definition references are checked for cycles to prevent A -> B -> A loops.
-     */
-    const char *ref_str = ZSTR_VAL(ref);
-    int check_cycle = (strncmp(ref_str, "#/definitions/", 14) == 0 ||
-                       strncmp(ref_str, "#/$defs/", 8) == 0);
-
-    if (check_cycle) {
-        if (!json_schema_context_push_ref(ctx, ref)) {
-            char msg[512];
-            snprintf(msg, sizeof(msg), "Circular $ref detected: '%s'", ZSTR_VAL(ref));
-            json_schema_context_add_error(ctx, JSON_SCHEMA_ERROR_REF, msg, NULL);
-            return 0;
-        }
-    }
-
-    zval *resolved = json_schema_resolve_ref(ref, ctx);
+    zval *resolved = json_schema_resolve_ref(ref, ref_schema, ctx);
     if (!resolved) {
         char msg[512];
         snprintf(msg, sizeof(msg), "Cannot resolve $ref '%s'", ZSTR_VAL(ref));
         json_schema_context_add_error(ctx, JSON_SCHEMA_ERROR_REF, msg, NULL);
-        if (check_cycle) {
-            json_schema_context_pop_ref(ctx);
-        }
         return 0;
     }
 
-    int result = validate_against_schema(data, resolved, ctx);
-
-    if (check_cycle) {
-        json_schema_context_pop_ref(ctx);
-    }
-
-    return result;
+    return validate_against_schema(data, resolved, ctx);
 }
 
 /* ============================================================================
@@ -1787,12 +2312,11 @@ static int validate_against_schema(zval *data, zval *schema, json_schema_context
     /* $ref - if present, should be processed first */
     val = zend_hash_str_find(schema_ht, "$ref", 4);
     if (val && Z_TYPE_P(val) == IS_STRING) {
-        if (!json_schema_validate_ref(data, Z_STR_P(val), ctx)) {
+        if (!json_schema_validate_ref(data, Z_STR_P(val), schema, ctx)) {
             valid = 0;
         }
-        /* In Draft-04, $ref should be the only property processed */
-        /* In Draft-06+, other properties can be siblings to $ref */
-        /* For simplicity, we continue processing other properties */
+        ctx->depth--;
+        return valid; /* Draft4-7: sibling keywords are ignored */
     }
 
     /* Type validation */
@@ -2177,6 +2701,12 @@ int json_schema_validate(zval *data, zval *schema, json_schema_context *ctx)
 {
     /* Store root schema for $ref resolution */
     ctx->root_schema = schema;
+
+    detect_draft_from_schema(ctx, schema);
+
+    zend_string *root_base = ctx->base_uri ? zend_string_copy(ctx->base_uri) : json_schema_empty_string();
+    json_schema_context_index_schema(ctx, schema, root_base, 1, 0);
+    zend_string_release(root_base);
 
     /* Handle definitions/defs */
     if (Z_TYPE_P(schema) == IS_ARRAY) {

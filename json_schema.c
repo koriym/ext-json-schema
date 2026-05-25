@@ -176,6 +176,32 @@ static void errors_to_array(json_schema_context *ctx, zval *errors_array)
     }
 }
 
+static void apply_context_options(json_schema_context *ctx, zval *options)
+{
+    if (!options || Z_TYPE_P(options) != IS_ARRAY) {
+        return;
+    }
+
+    zval *resolver = zend_hash_str_find(Z_ARRVAL_P(options), "resolver", sizeof("resolver") - 1);
+    if (resolver && Z_TYPE_P(resolver) != IS_NULL) {
+        if (!zend_is_callable(resolver, 0, NULL)) {
+            zend_throw_exception(zend_ce_type_error, "options['resolver'] must be callable or null", 0);
+            return;
+        }
+        json_schema_context_set_resolver(ctx, resolver);
+    }
+
+    zval *base_uri = zend_hash_str_find(Z_ARRVAL_P(options), "baseUri", sizeof("baseUri") - 1);
+    if (base_uri && Z_TYPE_P(base_uri) == IS_STRING) {
+        json_schema_context_set_base_uri(ctx, Z_STR_P(base_uri));
+    }
+
+    zval *draft = zend_hash_str_find(Z_ARRVAL_P(options), "draft", sizeof("draft") - 1);
+    if (draft && Z_TYPE_P(draft) == IS_STRING) {
+        json_schema_context_set_draft(ctx, Z_STR_P(draft));
+    }
+}
+
 /* {{{ proto void JsonSchema\Validator::__construct(int $checkMode = Constraint::CHECK_MODE_NORMAL) */
 PHP_METHOD(JsonSchema_Validator, __construct)
 {
@@ -197,20 +223,30 @@ PHP_METHOD(JsonSchema_Validator, validate)
 {
     zval *data;
     zval *schema;
+    zval *check_mode_param = NULL;
+    zval *options = NULL;
     zend_long check_mode = -1;
 
-    ZEND_PARSE_PARAMETERS_START(2, 3)
+    ZEND_PARSE_PARAMETERS_START(2, 4)
         Z_PARAM_ZVAL(data)
         Z_PARAM_ZVAL(schema)
         Z_PARAM_OPTIONAL
-        Z_PARAM_LONG(check_mode)
+        Z_PARAM_ZVAL(check_mode_param)
+        Z_PARAM_ZVAL(options)
     ZEND_PARSE_PARAMETERS_END();
 
     json_schema_validator_object *intern = Z_JSON_SCHEMA_VALIDATOR_P(ZEND_THIS);
 
     /* Use instance check_mode if not specified */
-    if (check_mode < 0) {
+    if (!check_mode_param || Z_TYPE_P(check_mode_param) == IS_NULL) {
         check_mode = intern->check_mode;
+    } else {
+        check_mode = zval_get_long(check_mode_param);
+    }
+
+    if (options && Z_TYPE_P(options) != IS_ARRAY) {
+        zend_throw_exception(zend_ce_type_error, "options must be an array", 0);
+        return;
     }
 
     /* Clear previous errors */
@@ -226,6 +262,11 @@ PHP_METHOD(JsonSchema_Validator, validate)
     }
     if (intern->base_uri) {
         json_schema_context_set_base_uri(ctx, intern->base_uri);
+    }
+    apply_context_options(ctx, options);
+    if (EG(exception)) {
+        json_schema_context_free(ctx);
+        RETURN_THROWS();
     }
 
     /* Perform validation */
@@ -377,16 +418,28 @@ PHP_FUNCTION(json_schema_validate)
 {
     zval *data;
     zval *schema;
+    zval *options = NULL;
     zend_long check_mode = JSON_SCHEMA_CHECK_MODE_NORMAL;
 
-    ZEND_PARSE_PARAMETERS_START(2, 3)
+    ZEND_PARSE_PARAMETERS_START(2, 4)
         Z_PARAM_ZVAL(data)
         Z_PARAM_ZVAL(schema)
         Z_PARAM_OPTIONAL
         Z_PARAM_LONG(check_mode)
+        Z_PARAM_ZVAL(options)
     ZEND_PARSE_PARAMETERS_END();
 
+    if (options && Z_TYPE_P(options) != IS_ARRAY) {
+        zend_throw_exception(zend_ce_type_error, "options must be an array", 0);
+        return;
+    }
+
     json_schema_context *ctx = json_schema_context_create((int)check_mode);
+    apply_context_options(ctx, options);
+    if (EG(exception)) {
+        json_schema_context_free(ctx);
+        RETURN_THROWS();
+    }
     int result = json_schema_validate(data, schema, ctx);
     json_schema_context_free(ctx);
 
@@ -400,16 +453,28 @@ PHP_FUNCTION(json_schema_validate_with_errors)
 {
     zval *data;
     zval *schema;
+    zval *options = NULL;
     zend_long check_mode = JSON_SCHEMA_CHECK_MODE_NORMAL;
 
-    ZEND_PARSE_PARAMETERS_START(2, 3)
+    ZEND_PARSE_PARAMETERS_START(2, 4)
         Z_PARAM_ZVAL(data)
         Z_PARAM_ZVAL(schema)
         Z_PARAM_OPTIONAL
         Z_PARAM_LONG(check_mode)
+        Z_PARAM_ZVAL(options)
     ZEND_PARSE_PARAMETERS_END();
 
+    if (options && Z_TYPE_P(options) != IS_ARRAY) {
+        zend_throw_exception(zend_ce_type_error, "options must be an array", 0);
+        return;
+    }
+
     json_schema_context *ctx = json_schema_context_create((int)check_mode);
+    apply_context_options(ctx, options);
+    if (EG(exception)) {
+        json_schema_context_free(ctx);
+        RETURN_THROWS();
+    }
     int result = json_schema_validate(data, schema, ctx);
 
     array_init(return_value);
@@ -430,16 +495,28 @@ PHP_FUNCTION(json_schema_get_errors)
 {
     zval *data;
     zval *schema;
+    zval *options = NULL;
     zend_long check_mode = JSON_SCHEMA_CHECK_MODE_NORMAL;
 
-    ZEND_PARSE_PARAMETERS_START(2, 3)
+    ZEND_PARSE_PARAMETERS_START(2, 4)
         Z_PARAM_ZVAL(data)
         Z_PARAM_ZVAL(schema)
         Z_PARAM_OPTIONAL
         Z_PARAM_LONG(check_mode)
+        Z_PARAM_ZVAL(options)
     ZEND_PARSE_PARAMETERS_END();
 
+    if (options && Z_TYPE_P(options) != IS_ARRAY) {
+        zend_throw_exception(zend_ce_type_error, "options must be an array", 0);
+        return;
+    }
+
     json_schema_context *ctx = json_schema_context_create((int)check_mode);
+    apply_context_options(ctx, options);
+    if (EG(exception)) {
+        json_schema_context_free(ctx);
+        RETURN_THROWS();
+    }
     json_schema_validate(data, schema, ctx);
 
     array_init(return_value);
@@ -461,6 +538,7 @@ ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(arginfo_json_schema_validator_validate, 
     ZEND_ARG_TYPE_INFO(0, data, IS_MIXED, 0)
     ZEND_ARG_TYPE_INFO(0, schema, IS_MIXED, 0)
     ZEND_ARG_TYPE_INFO_WITH_DEFAULT_VALUE(0, checkMode, IS_LONG, 1, "null")
+    ZEND_ARG_TYPE_INFO_WITH_DEFAULT_VALUE(0, options, IS_ARRAY, 0, "[]")
 ZEND_END_ARG_INFO()
 
 ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(arginfo_json_schema_validator_is_valid, 0, 0, _IS_BOOL, 0)
@@ -492,18 +570,21 @@ ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(arginfo_json_schema_validate, 0, 2, _IS_
     ZEND_ARG_TYPE_INFO(0, data, IS_MIXED, 0)
     ZEND_ARG_TYPE_INFO(0, schema, IS_MIXED, 0)
     ZEND_ARG_TYPE_INFO_WITH_DEFAULT_VALUE(0, checkMode, IS_LONG, 0, "0")
+    ZEND_ARG_TYPE_INFO_WITH_DEFAULT_VALUE(0, options, IS_ARRAY, 0, "[]")
 ZEND_END_ARG_INFO()
 
 ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(arginfo_json_schema_validate_with_errors, 0, 2, IS_ARRAY, 0)
     ZEND_ARG_TYPE_INFO(0, data, IS_MIXED, 0)
     ZEND_ARG_TYPE_INFO(0, schema, IS_MIXED, 0)
     ZEND_ARG_TYPE_INFO_WITH_DEFAULT_VALUE(0, checkMode, IS_LONG, 0, "0")
+    ZEND_ARG_TYPE_INFO_WITH_DEFAULT_VALUE(0, options, IS_ARRAY, 0, "[]")
 ZEND_END_ARG_INFO()
 
 ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(arginfo_json_schema_get_errors, 0, 2, IS_ARRAY, 0)
     ZEND_ARG_TYPE_INFO(0, data, IS_MIXED, 0)
     ZEND_ARG_TYPE_INFO(0, schema, IS_MIXED, 0)
     ZEND_ARG_TYPE_INFO_WITH_DEFAULT_VALUE(0, checkMode, IS_LONG, 0, "0")
+    ZEND_ARG_TYPE_INFO_WITH_DEFAULT_VALUE(0, options, IS_ARRAY, 0, "[]")
 ZEND_END_ARG_INFO()
 
 /* ============================================================================

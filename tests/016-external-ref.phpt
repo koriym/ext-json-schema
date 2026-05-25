@@ -171,11 +171,11 @@ No resolver returns error: PASS
 Test 5: Base URI
 Resolver called with baseUri: /schemas/v1/
 Resolver called with baseUri: /schemas/v1/
+Resolver called with baseUri: /schemas/v1/user.json
+Resolver called with baseUri: /schemas/v1/user.json
 
 Test 6: Relative path resolution
-Resolved: ../common/string-types.json -> /schemas/v1/common/string-types.json
 Valid product: PASS
-Resolved: ../common/string-types.json -> /schemas/v1/common/string-types.json
 Empty name rejected: PASS
 
 All tests completed!

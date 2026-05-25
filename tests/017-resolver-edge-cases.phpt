@@ -39,7 +39,7 @@ $validator->setRefResolver(function(string $uri, string $baseUri) {
     return true;
 });
 $result = $validator->validate($data, $schema);
-echo "Boolean return handled: " . (!$result ? "PASS" : "FAIL") . "\n";
+echo "Boolean schema accepted: " . ($result ? "PASS" : "FAIL") . "\n";
 
 // Test 5: Resolver throwing exception
 echo "\nTest 5: Resolver throwing exception\n";
@@ -104,7 +104,7 @@ Test 3: Resolver returning integer
 Integer return handled: PASS
 
 Test 4: Resolver returning boolean
-Boolean return handled: PASS
+Boolean schema accepted: PASS
 
 Test 5: Resolver throwing exception
 Exception propagated: Resolver error
