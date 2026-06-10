@@ -36,6 +36,8 @@
         "sort-packages": true
     },
     "scripts": {
+        "bench:quick": "php bench.php --quick",
+        "shadow-validate": "php shadow_validate.php",
         "test": "phpunit",
         "test-suite": "php run_test_suite.php"
     }

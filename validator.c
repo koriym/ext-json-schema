@@ -1039,7 +1039,7 @@ int json_schema_validate_min_length(zval *data, zend_long min_length, json_schem
 
     if ((zend_long)len < min_length) {
         char msg[256];
-        snprintf(msg, sizeof(msg), "String is too short (%zu < %ld)", len, min_length);
+        snprintf(msg, sizeof(msg), "String is too short (%zu < %lld)", len, (long long)min_length);
         json_schema_context_add_error(ctx, JSON_SCHEMA_ERROR_MIN_LENGTH, msg, NULL);
         return 0;
     }
@@ -1056,7 +1056,7 @@ int json_schema_validate_max_length(zval *data, zend_long max_length, json_schem
 
     if ((zend_long)len > max_length) {
         char msg[256];
-        snprintf(msg, sizeof(msg), "String is too long (%zu > %ld)", len, max_length);
+        snprintf(msg, sizeof(msg), "String is too long (%zu > %lld)", len, (long long)max_length);
         json_schema_context_add_error(ctx, JSON_SCHEMA_ERROR_MAX_LENGTH, msg, NULL);
         return 0;
     }
@@ -1202,7 +1202,8 @@ int json_schema_validate_min_items(zval *data, zend_long min_items, json_schema_
     zend_long count = zend_hash_num_elements(Z_ARRVAL_P(data));
     if (count < min_items) {
         char msg[256];
-        snprintf(msg, sizeof(msg), "Array has too few items (%ld < %ld)", count, min_items);
+        snprintf(msg, sizeof(msg), "Array has too few items (%lld < %lld)",
+            (long long)count, (long long)min_items);
         json_schema_context_add_error(ctx, JSON_SCHEMA_ERROR_MIN_ITEMS, msg, NULL);
         return 0;
     }
@@ -1218,7 +1219,8 @@ int json_schema_validate_max_items(zval *data, zend_long max_items, json_schema_
     zend_long count = zend_hash_num_elements(Z_ARRVAL_P(data));
     if (count > max_items) {
         char msg[256];
-        snprintf(msg, sizeof(msg), "Array has too many items (%ld > %ld)", count, max_items);
+        snprintf(msg, sizeof(msg), "Array has too many items (%lld > %lld)",
+            (long long)count, (long long)max_items);
         json_schema_context_add_error(ctx, JSON_SCHEMA_ERROR_MAX_ITEMS, msg, NULL);
         return 0;
     }
@@ -1261,8 +1263,8 @@ int json_schema_validate_unique_items(zval *data, json_schema_context *ctx)
             for (zend_ulong j = 0; j < idx; j++) {
                 if (hashes[j] == h && json_schema_values_equal(items[j], item)) {
                     char msg[256];
-                    snprintf(msg, sizeof(msg), "Array contains duplicate items at indices %lu and %lu",
-                             (unsigned long)j, (unsigned long)idx);
+                    snprintf(msg, sizeof(msg), "Array contains duplicate items at indices %llu and %llu",
+                             (unsigned long long)j, (unsigned long long)idx);
                     json_schema_context_add_error(ctx, JSON_SCHEMA_ERROR_UNIQUE_ITEMS, msg, NULL);
                     result = 0;
                     goto done;
@@ -1330,7 +1332,8 @@ int json_schema_validate_min_properties(zval *data, zend_long min_props, json_sc
 
     if (count < min_props) {
         char msg[256];
-        snprintf(msg, sizeof(msg), "Object has too few properties (%ld < %ld)", count, min_props);
+        snprintf(msg, sizeof(msg), "Object has too few properties (%lld < %lld)",
+            (long long)count, (long long)min_props);
         json_schema_context_add_error(ctx, JSON_SCHEMA_ERROR_MIN_PROPERTIES, msg, NULL);
         return 0;
     }
@@ -1352,7 +1355,8 @@ int json_schema_validate_max_properties(zval *data, zend_long max_props, json_sc
 
     if (count > max_props) {
         char msg[256];
-        snprintf(msg, sizeof(msg), "Object has too many properties (%ld > %ld)", count, max_props);
+        snprintf(msg, sizeof(msg), "Object has too many properties (%lld > %lld)",
+            (long long)count, (long long)max_props);
         json_schema_context_add_error(ctx, JSON_SCHEMA_ERROR_MAX_PROPERTIES, msg, NULL);
         return 0;
     }
@@ -1834,7 +1838,7 @@ int json_schema_validate_if_then_else(zval *data, zval *if_schema, zval *then_sc
 
 /*
  * Resolve a JSON Pointer within a JSON value.
- * pointer should be the part after "#/" (e.g., "definitions/Foo" for "#/definitions/Foo")
+ * pointer should include the leading "/" (e.g., "/definitions/Foo" for "#/definitions/Foo")
  * Returns NULL if resolution fails.
  */
 static zval *resolve_json_pointer(zval *root, const char *pointer)
@@ -1843,10 +1847,18 @@ static zval *resolve_json_pointer(zval *root, const char *pointer)
         return NULL;
     }
 
-    zval *current = root;
-    const char *ptr = pointer;
+    if (*pointer == '\0') {
+        return root;
+    }
 
-    while (*ptr) {
+    if (*pointer != '/') {
+        return NULL;
+    }
+
+    zval *current = root;
+    const char *ptr = pointer + 1;
+
+    while (1) {
         const char *slash = strchr(ptr, '/');
         size_t segment_len = slash ? (size_t)(slash - ptr) : strlen(ptr);
 
@@ -1901,7 +1913,7 @@ static zval *resolve_json_pointer(zval *root, const char *pointer)
                 /* Try numeric index */
                 char *end;
                 zend_long idx = strtol(segment, &end, 10);
-                if (*end == '\0') {
+                if (segment_len > 0 && *end == '\0') {
                     next = zend_hash_index_find(Z_ARRVAL_P(current), idx);
                 }
             }
@@ -1913,45 +1925,13 @@ static zval *resolve_json_pointer(zval *root, const char *pointer)
             return NULL;
         }
 
-        if (slash) {
-            ptr = slash + 1;
-        } else {
+        if (!slash) {
             break;
         }
-    }
-
-    /* A trailing slash denotes a final empty token (e.g. /definitions/). */
-    size_t pointer_len = strlen(pointer);
-    if (pointer_len > 1 && pointer[pointer_len - 1] == '/') {
-        if (Z_TYPE_P(current) == IS_ARRAY) {
-            zval *next = zend_hash_str_find(Z_ARRVAL_P(current), "", 0);
-            if (!next) {
-                return NULL;
-            }
-            current = next;
-        } else {
-            return NULL;
-        }
+        ptr = slash + 1;
     }
 
     return current;
-}
-
-static int schema_id_keyword_matches(json_schema_context *ctx, zend_string *key)
-{
-    if (!key) {
-        return 0;
-    }
-
-    if (ctx->draft == JSON_SCHEMA_DRAFT_04) {
-        return zend_string_equals_literal(key, "id");
-    }
-
-    if (ctx->draft == JSON_SCHEMA_DRAFT_06 || ctx->draft == JSON_SCHEMA_DRAFT_07) {
-        return zend_string_equals_literal(key, "$id");
-    }
-
-    return zend_string_equals_literal(key, "$id") || zend_string_equals_literal(key, "id");
 }
 
 static zval *schema_find_id(json_schema_context *ctx, zval *schema)
@@ -1993,6 +1973,67 @@ static void detect_draft_from_schema(json_schema_context *ctx, zval *schema)
     } else if (strstr(Z_STRVAL_P(schema_uri), "draft-07")) {
         ctx->draft = JSON_SCHEMA_DRAFT_07;
     }
+}
+
+static void json_schema_context_index_schema_child(json_schema_context *ctx, zval *schema, zend_string *base_uri, int depth)
+{
+    if (!schema) {
+        return;
+    }
+
+    if (Z_TYPE_P(schema) == IS_ARRAY || Z_TYPE_P(schema) == IS_TRUE || Z_TYPE_P(schema) == IS_FALSE) {
+        json_schema_context_index_schema(ctx, schema, base_uri, 0, depth + 1);
+    }
+}
+
+static void json_schema_context_index_schema_map_values(json_schema_context *ctx, zval *schemas, zend_string *base_uri, int depth)
+{
+    if (!schemas || Z_TYPE_P(schemas) != IS_ARRAY) {
+        return;
+    }
+
+    zval *schema;
+    ZEND_HASH_FOREACH_VAL(Z_ARRVAL_P(schemas), schema) {
+        json_schema_context_index_schema_child(ctx, schema, base_uri, depth);
+    } ZEND_HASH_FOREACH_END();
+}
+
+static void json_schema_context_index_schema_array_or_schema(json_schema_context *ctx, zval *schemas, zend_string *base_uri, int depth)
+{
+    if (!schemas) {
+        return;
+    }
+
+    if (Z_TYPE_P(schemas) != IS_ARRAY) {
+        json_schema_context_index_schema_child(ctx, schemas, base_uri, depth);
+        return;
+    }
+
+    zval *first = zend_hash_index_find(Z_ARRVAL_P(schemas), 0);
+    if (first && (Z_TYPE_P(first) == IS_ARRAY || Z_TYPE_P(first) == IS_TRUE || Z_TYPE_P(first) == IS_FALSE)) {
+        json_schema_context_index_schema_map_values(ctx, schemas, base_uri, depth);
+        return;
+    }
+
+    json_schema_context_index_schema_child(ctx, schemas, base_uri, depth);
+}
+
+static void json_schema_context_index_dependencies(json_schema_context *ctx, zval *dependencies, zend_string *base_uri, int depth)
+{
+    if (!dependencies || Z_TYPE_P(dependencies) != IS_ARRAY) {
+        return;
+    }
+
+    zval *dependency;
+    ZEND_HASH_FOREACH_VAL(Z_ARRVAL_P(dependencies), dependency) {
+        if (Z_TYPE_P(dependency) == IS_ARRAY) {
+            zval *first = zend_hash_index_find(Z_ARRVAL_P(dependency), 0);
+            if (first && Z_TYPE_P(first) == IS_STRING) {
+                continue;
+            }
+        }
+        json_schema_context_index_schema_child(ctx, dependency, base_uri, depth);
+    } ZEND_HASH_FOREACH_END();
 }
 
 static void json_schema_context_index_schema(json_schema_context *ctx, zval *schema, zend_string *base_uri, int is_document_root, int depth)
@@ -2048,17 +2089,23 @@ static void json_schema_context_index_schema(json_schema_context *ctx, zval *sch
         zend_string_release(resolved);
     }
 
-    zend_string *key;
-    zend_ulong idx;
-    zval *child;
-    ZEND_HASH_FOREACH_KEY_VAL(ht, idx, key, child) {
-        if (key && schema_id_keyword_matches(ctx, key)) {
-            continue;
-        }
-        if (Z_TYPE_P(child) == IS_ARRAY || Z_TYPE_P(child) == IS_TRUE || Z_TYPE_P(child) == IS_FALSE) {
-            json_schema_context_index_schema(ctx, child, current_base, 0, depth + 1);
-        }
-    } ZEND_HASH_FOREACH_END();
+    json_schema_context_index_schema_map_values(ctx, zend_hash_str_find(ht, "definitions", 11), current_base, depth);
+    json_schema_context_index_schema_map_values(ctx, zend_hash_str_find(ht, "$defs", 5), current_base, depth);
+    json_schema_context_index_schema_map_values(ctx, zend_hash_str_find(ht, "properties", 10), current_base, depth);
+    json_schema_context_index_schema_map_values(ctx, zend_hash_str_find(ht, "patternProperties", 17), current_base, depth);
+    json_schema_context_index_schema_child(ctx, zend_hash_str_find(ht, "additionalProperties", 20), current_base, depth);
+    json_schema_context_index_schema_array_or_schema(ctx, zend_hash_str_find(ht, "items", 5), current_base, depth);
+    json_schema_context_index_schema_child(ctx, zend_hash_str_find(ht, "additionalItems", 15), current_base, depth);
+    json_schema_context_index_schema_child(ctx, zend_hash_str_find(ht, "contains", 8), current_base, depth);
+    json_schema_context_index_schema_child(ctx, zend_hash_str_find(ht, "propertyNames", 13), current_base, depth);
+    json_schema_context_index_dependencies(ctx, zend_hash_str_find(ht, "dependencies", 12), current_base, depth);
+    json_schema_context_index_schema_map_values(ctx, zend_hash_str_find(ht, "allOf", 5), current_base, depth);
+    json_schema_context_index_schema_map_values(ctx, zend_hash_str_find(ht, "anyOf", 5), current_base, depth);
+    json_schema_context_index_schema_map_values(ctx, zend_hash_str_find(ht, "oneOf", 5), current_base, depth);
+    json_schema_context_index_schema_child(ctx, zend_hash_str_find(ht, "not", 3), current_base, depth);
+    json_schema_context_index_schema_child(ctx, zend_hash_str_find(ht, "if", 2), current_base, depth);
+    json_schema_context_index_schema_child(ctx, zend_hash_str_find(ht, "then", 4), current_base, depth);
+    json_schema_context_index_schema_child(ctx, zend_hash_str_find(ht, "else", 4), current_base, depth);
 
     zend_string_release(current_base);
 }
@@ -2168,7 +2215,7 @@ static zval *json_schema_resolve_full_uri(zend_string *full_uri, zend_string *so
 
     zval *resolved = NULL;
     if (ZSTR_VAL(fragment)[0] == '/') {
-        resolved = resolve_json_pointer(doc_schema, ZSTR_VAL(fragment) + 1);
+        resolved = resolve_json_pointer(doc_schema, ZSTR_VAL(fragment));
     } else {
         resolved = registry_get_uri(ctx, full_uri);
     }
@@ -2475,7 +2522,8 @@ static int validate_against_schema(zval *data, zval *schema, json_schema_context
                             if (additional_items) {
                                 if (Z_TYPE_P(additional_items) == IS_FALSE) {
                                     char msg[256];
-                                    snprintf(msg, sizeof(msg), "Additional item at index %lu is not allowed", idx);
+                                    snprintf(msg, sizeof(msg), "Additional item at index %llu is not allowed",
+                                        (unsigned long long)idx);
                                     json_schema_context_add_error(ctx, JSON_SCHEMA_ERROR_ADDITIONAL_PROPERTIES, msg, NULL);
                                     valid = 0;
                                 } else if (Z_TYPE_P(additional_items) == IS_ARRAY) {

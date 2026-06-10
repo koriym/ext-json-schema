@@ -65,6 +65,34 @@ $schema = [
 check('empty pointer token valid', 1, $schema, true, $options);
 check('empty pointer token invalid', 'x', $schema, false, $options);
 
+// Empty JSON Pointer token must not fall back to numeric index 0.
+$schema = [
+    'allOf' => [['type' => 'string']],
+    '$ref' => '#/allOf/',
+];
+check('empty pointer token no numeric fallback', 'ok', $schema, false, $options);
+
+// Root-level empty JSON Pointer token (#/).
+$schema = [
+    '' => ['type' => 'string'],
+    '$ref' => '#/',
+];
+check('root empty pointer token valid', 'ok', $schema, true, $options);
+check('root empty pointer token invalid', 1, $schema, false, $options);
+
+// $id inside annotation values must not pollute the schema URI registry.
+$schema = [
+    '$id' => 'http://example.com/annotations/root.json',
+    'definitions' => [
+        'target' => ['$id' => 'target.json', 'type' => 'integer'],
+    ],
+    'default' => ['$id' => 'target.json', 'type' => 'string'],
+    'type' => 'object',
+    'properties' => ['value' => ['$ref' => 'target.json']],
+];
+check('annotation id ignored valid', ['value' => 1], $schema, true, $options);
+check('annotation id ignored invalid', ['value' => 'x'], $schema, false, $options);
+
 // Remote resolver with relative refs inside the retrieved schema.
 $remoteSchemas = [
     'http://example.com/schemas/root.json' => [
@@ -91,5 +119,10 @@ absolute path ref valid: PASS
 absolute path ref invalid: PASS
 empty pointer token valid: PASS
 empty pointer token invalid: PASS
+empty pointer token no numeric fallback: PASS
+root empty pointer token valid: PASS
+root empty pointer token invalid: PASS
+annotation id ignored valid: PASS
+annotation id ignored invalid: PASS
 remote relative ref valid: PASS
 remote relative ref invalid: PASS
