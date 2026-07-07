@@ -290,16 +290,16 @@ function run_comparison(string $extension, array $paths): int
 
     $ext = decode_engine_output(run_engine_process('ext', $extension, $paths), 'ext');
     $php = decode_engine_output(run_engine_process('php', $extension, $paths), 'php');
-    $phpByName = [];
-    foreach ($php['results'] as $result) {
-        $phpByName[$result['name']] = $result;
-    }
-
     $diffs = [];
-    foreach ($ext['results'] as $extResult) {
+    foreach ($ext['results'] as $i => $extResult) {
+        $phpResult = $php['results'][$i] ?? null;
         $name = $extResult['name'];
-        $phpResult = $phpByName[$name] ?? null;
-        if (!$phpResult || $extResult['valid'] !== $phpResult['valid'] || $extResult['error'] !== $phpResult['error']) {
+        if (
+            !$phpResult
+            || $extResult['name'] !== $phpResult['name']
+            || $extResult['valid'] !== $phpResult['valid']
+            || $extResult['error'] !== $phpResult['error']
+        ) {
             $diffs[] = ['case' => $name, 'ext' => $extResult, 'php' => $phpResult];
         }
     }

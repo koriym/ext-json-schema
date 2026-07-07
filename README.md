@@ -70,7 +70,11 @@ $valid = json_schema_validate($data, $schema, JsonSchema\Constraint::CHECK_MODE_
     'baseUri' => 'http://example.com/schemas/root.json',
     'draft' => 'draft7',
     'resolver' => static function (string $uri, string $baseUri, string $rawRef): array|bool|null {
-        // Return the schema for $uri, or null when it cannot be resolved.
+        // $uri     - fully resolved absolute URI of the schema to fetch (use for lookup)
+        // $baseUri - base URI of the document that contains the $ref
+        // $rawRef  - the original $ref string exactly as written in the schema
+        // Return the schema array for $uri, a boolean schema (true = always valid,
+        // false = always invalid), or null when the reference cannot be resolved.
         return $schemas[$uri] ?? null;
     },
 ]);

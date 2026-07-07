@@ -183,8 +183,8 @@ static void apply_context_options(json_schema_context *ctx, zval *options)
     }
 
     zval *resolver = zend_hash_str_find(Z_ARRVAL_P(options), "resolver", sizeof("resolver") - 1);
-    if (resolver && Z_TYPE_P(resolver) != IS_NULL) {
-        if (!zend_is_callable(resolver, 0, NULL)) {
+    if (resolver) {
+        if (Z_TYPE_P(resolver) != IS_NULL && !zend_is_callable(resolver, 0, NULL)) {
             zend_throw_exception(zend_ce_type_error, "options['resolver'] must be callable or null", 0);
             return;
         }

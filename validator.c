@@ -248,6 +248,25 @@ static zend_string *uri_resolve(zend_string *base_uri, zend_string *ref)
         return smart_str_extract(&out);
     }
 
+    /* Network-path reference (RFC 3986 §4.2): "//host/path" inherits the
+     * scheme from the base URI but replaces authority and path. */
+    if (ZSTR_LEN(ref) >= 2 && ZSTR_VAL(ref)[0] == '/' && ZSTR_VAL(ref)[1] == '/') {
+        const char *s = ZSTR_VAL(base_doc);
+        size_t len = ZSTR_LEN(base_doc);
+        const char *colon = memchr(s, ':', len);
+        smart_str out = {0};
+        if (colon) {
+            smart_str_appendl(&out, s, (size_t)(colon - s) + 1);
+        }
+        smart_str_append(&out, ref);
+        smart_str_0(&out);
+        zend_string_release(base_doc);
+        result = smart_str_extract(&out);
+        zend_string *normalized = uri_remove_dot_segments(result);
+        zend_string_release(result);
+        return normalized;
+    }
+
     if (ZSTR_VAL(ref)[0] == '/') {
         zend_string *prefix = uri_scheme_authority_prefix(base_doc);
         smart_str out = {0};
@@ -260,6 +279,23 @@ static zend_string *uri_resolve(zend_string *base_uri, zend_string *ref)
         zend_string *normalized = uri_remove_dot_segments(result);
         zend_string_release(result);
         return normalized;
+    }
+
+    /* Query-only reference (RFC 3986 §4.2): "?query" replaces the query on
+     * the current document while keeping scheme, authority, and path. */
+    if (ZSTR_VAL(ref)[0] == '?') {
+        const char *s = ZSTR_VAL(base_doc);
+        size_t len = ZSTR_LEN(base_doc);
+        size_t path_len = 0;
+        while (path_len < len && s[path_len] != '?') {
+            path_len++;
+        }
+        smart_str out = {0};
+        smart_str_appendl(&out, s, path_len);
+        smart_str_append(&out, ref);
+        smart_str_0(&out);
+        zend_string_release(base_doc);
+        return smart_str_extract(&out);
     }
 
     zend_string *dir = uri_directory(base_doc);
