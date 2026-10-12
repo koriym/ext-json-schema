@@ -939,8 +939,10 @@ static int report_fatal_error(json_schema_context *ctx, int valid)
     return 0;
 }
 
+#define COMPARE_DEPTH_EXCEEDED "Maximum comparison depth exceeded"
+
 /* Compute hash for a JSON value - used for O(n) uniqueItems check */
-static zend_ulong json_schema_value_hash(zval *val)
+static zend_ulong json_schema_value_hash(zval *val, int depth, int *too_deep)
 {
     zend_ulong hash = Z_TYPE_P(val);
 
@@ -963,6 +965,10 @@ static zend_ulong json_schema_value_hash(zval *val)
             return hash ^ ZSTR_HASH(Z_STR_P(val));
         case IS_ARRAY:
         case IS_OBJECT: {
+            if (*too_deep || depth >= JSON_SCHEMA_MAX_COMPARE_DEPTH) {
+                *too_deep = 1;
+                return hash;
+            }
             HashTable *ht = (Z_TYPE_P(val) == IS_ARRAY) ? Z_ARRVAL_P(val) : Z_OBJPROP_P(val);
             zend_ulong count = zend_hash_num_elements(ht);
             hash ^= count << 8;
@@ -987,13 +993,13 @@ static zend_ulong json_schema_value_hash(zval *val)
                         elem_hash = ZSTR_HASH(key);
                     }
                     /* Mix key hash with value hash using multiplication to avoid simple XOR cancellation */
-                    elem_hash = (elem_hash * 31) ^ json_schema_value_hash(elem);
+                    elem_hash = (elem_hash * 31) ^ json_schema_value_hash(elem, depth + 1, too_deep);
                     hash ^= elem_hash;  /* XOR is commutative - order independent */
                 } ZEND_HASH_FOREACH_END();
             } else {
                 /* For numeric arrays: order matters, use position-sensitive hashing */
                 ZEND_HASH_FOREACH_KEY_VAL(ht, idx, key, elem) {
-                    hash = (hash * 31) ^ (idx << 4) ^ json_schema_value_hash(elem);
+                    hash = (hash * 31) ^ (idx << 4) ^ json_schema_value_hash(elem, depth + 1, too_deep);
                 } ZEND_HASH_FOREACH_END();
             }
             return hash;
@@ -1003,7 +1009,7 @@ static zend_ulong json_schema_value_hash(zval *val)
     }
 }
 
-int json_schema_values_equal(zval *a, zval *b)
+int json_schema_values_equal(zval *a, zval *b, int depth)
 {
     /* Fast path: identity check */
     if (a == b) {
@@ -1015,6 +1021,9 @@ int json_schema_values_equal(zval *a, zval *b)
     int b_is_container = (Z_TYPE_P(b) == IS_ARRAY || Z_TYPE_P(b) == IS_OBJECT);
 
     if (a_is_container && b_is_container) {
+        if (depth >= JSON_SCHEMA_MAX_COMPARE_DEPTH) {
+            return -1;
+        }
         HashTable *ht_a = (Z_TYPE_P(a) == IS_ARRAY) ? Z_ARRVAL_P(a) : Z_OBJPROP_P(a);
         HashTable *ht_b = (Z_TYPE_P(b) == IS_ARRAY) ? Z_ARRVAL_P(b) : Z_OBJPROP_P(b);
 
@@ -1033,8 +1042,12 @@ int json_schema_values_equal(zval *a, zval *b)
             } else {
                 val_b = zend_hash_index_find(ht_b, idx);
             }
-            if (!val_b || !json_schema_values_equal(val_a, val_b)) {
+            if (!val_b) {
                 return 0;
+            }
+            int equal = json_schema_values_equal(val_a, val_b, depth + 1);
+            if (equal != 1) {
+                return equal;
             }
         } ZEND_HASH_FOREACH_END();
 
@@ -1394,7 +1407,13 @@ int json_schema_validate_unique_items(zval *data, json_schema_context *ctx)
     int result = 1;
 
     ZEND_HASH_FOREACH_VAL(arr, item) {
-        zend_ulong h = json_schema_value_hash(item);
+        int too_deep = 0;
+        zend_ulong h = json_schema_value_hash(item, 0, &too_deep);
+        if (too_deep) {
+            json_schema_context_add_error(ctx, JSON_SCHEMA_ERROR_UNIQUE_ITEMS, COMPARE_DEPTH_EXCEEDED, NULL);
+            result = keep_fatal_error(ctx);
+            goto done;
+        }
         hashes[idx] = h;
         items[idx] = item;
 
@@ -1402,7 +1421,16 @@ int json_schema_validate_unique_items(zval *data, json_schema_context *ctx)
         if (existing_idx_zv) {
             /* Scan previous items with the same hash */
             for (zend_ulong j = 0; j < idx; j++) {
-                if (hashes[j] == h && json_schema_values_equal(items[j], item)) {
+                if (hashes[j] != h) {
+                    continue;
+                }
+                int equal = json_schema_values_equal(items[j], item, 0);
+                if (equal == -1) {
+                    json_schema_context_add_error(ctx, JSON_SCHEMA_ERROR_UNIQUE_ITEMS, COMPARE_DEPTH_EXCEEDED, NULL);
+                    result = keep_fatal_error(ctx);
+                    goto done;
+                }
+                if (equal) {
                     char msg[256];
                     snprintf(msg, sizeof(msg), "Array contains duplicate items at indices %llu and %llu",
                              (unsigned long long)j, (unsigned long long)idx);
@@ -1665,7 +1693,7 @@ int json_schema_validate_enum(zval *data, zval *enum_values, json_schema_context
 
     zval *enum_val;
     ZEND_HASH_FOREACH_VAL(Z_ARRVAL_P(enum_values), enum_val) {
-        if (json_schema_values_equal(data, enum_val)) {
+        if (json_schema_values_equal(data, enum_val, 0) == 1) {
             return 1;
         }
     } ZEND_HASH_FOREACH_END();
@@ -1677,7 +1705,7 @@ int json_schema_validate_enum(zval *data, zval *enum_values, json_schema_context
 
 int json_schema_validate_const(zval *data, zval *const_value, json_schema_context *ctx)
 {
-    if (!json_schema_values_equal(data, const_value)) {
+    if (json_schema_values_equal(data, const_value, 0) != 1) {
         json_schema_context_add_error(ctx, JSON_SCHEMA_ERROR_CONST_MISMATCH,
             "Value does not match const", NULL);
         return 0;

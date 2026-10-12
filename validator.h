@@ -27,6 +27,9 @@
 #define JSON_SCHEMA_DRAFT_06   6
 #define JSON_SCHEMA_DRAFT_07   7
 
+/* Maximum container nesting compared by enum, const and uniqueItems (json_decode's default depth) */
+#define JSON_SCHEMA_MAX_COMPARE_DEPTH 512
+
 /* ============================================================================
  * Data Structures
  * ========================================================================== */
@@ -161,7 +164,8 @@ void json_schema_context_set_draft(json_schema_context *ctx, zend_string *draft)
  * ========================================================================== */
 
 int json_schema_is_type(zval *data, const char *type);
-int json_schema_values_equal(zval *a, zval *b);
+/* Returns 1 if equal, 0 if not, -1 if nesting exceeds JSON_SCHEMA_MAX_COMPARE_DEPTH */
+int json_schema_values_equal(zval *a, zval *b, int depth);
 zend_string *json_schema_get_type_name(zval *data);
 int json_schema_coerce_type(zval *data, const char *target_type);
 
