@@ -1143,22 +1143,28 @@ static size_t utf8_strlen(const char *str, size_t byte_len)
     const unsigned char *end = s + byte_len;
 
     while (s < end) {
+        size_t seq_len;
         if ((*s & 0x80) == 0) {
             /* ASCII: 0xxxxxxx */
-            s++;
+            seq_len = 1;
         } else if ((*s & 0xE0) == 0xC0) {
             /* 2-byte: 110xxxxx */
-            s += 2;
+            seq_len = 2;
         } else if ((*s & 0xF0) == 0xE0) {
             /* 3-byte: 1110xxxx */
-            s += 3;
+            seq_len = 3;
         } else if ((*s & 0xF8) == 0xF0) {
             /* 4-byte: 11110xxx */
-            s += 4;
+            seq_len = 4;
         } else {
             /* Invalid UTF-8, count as single byte */
-            s++;
+            seq_len = 1;
         }
+        /* A sequence truncated at the end counts as one character */
+        if (seq_len > (size_t)(end - s)) {
+            seq_len = end - s;
+        }
+        s += seq_len;
         char_count++;
     }
     return char_count;
