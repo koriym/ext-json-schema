@@ -202,7 +202,7 @@ static void apply_context_options(json_schema_context *ctx, zval *options)
     }
 }
 
-/* {{{ proto void JsonSchema\Validator::__construct(int $checkMode = Constraint::CHECK_MODE_NORMAL) */
+/* {{{ proto void JsonSchema\Ext\Validator::__construct(int $checkMode = Constraint::CHECK_MODE_NORMAL) */
 PHP_METHOD(JsonSchema_Validator, __construct)
 {
     zend_long check_mode = JSON_SCHEMA_CHECK_MODE_NORMAL;
@@ -217,7 +217,7 @@ PHP_METHOD(JsonSchema_Validator, __construct)
 }
 /* }}} */
 
-/* {{{ proto bool JsonSchema\Validator::validate(mixed $data, mixed $schema, int $checkMode = null)
+/* {{{ proto bool JsonSchema\Ext\Validator::validate(mixed $data, mixed $schema, int $checkMode = null)
    Validates data against a JSON Schema */
 PHP_METHOD(JsonSchema_Validator, validate)
 {
@@ -290,7 +290,7 @@ PHP_METHOD(JsonSchema_Validator, validate)
 }
 /* }}} */
 
-/* {{{ proto bool JsonSchema\Validator::isValid()
+/* {{{ proto bool JsonSchema\Ext\Validator::isValid()
    Returns whether the last validation was valid */
 PHP_METHOD(JsonSchema_Validator, isValid)
 {
@@ -302,7 +302,7 @@ PHP_METHOD(JsonSchema_Validator, isValid)
 }
 /* }}} */
 
-/* {{{ proto array JsonSchema\Validator::getErrors()
+/* {{{ proto array JsonSchema\Ext\Validator::getErrors()
    Returns the validation errors from the last validation */
 PHP_METHOD(JsonSchema_Validator, getErrors)
 {
@@ -314,7 +314,7 @@ PHP_METHOD(JsonSchema_Validator, getErrors)
 }
 /* }}} */
 
-/* {{{ proto void JsonSchema\Validator::reset()
+/* {{{ proto void JsonSchema\Ext\Validator::reset()
    Resets the validator state */
 PHP_METHOD(JsonSchema_Validator, reset)
 {
@@ -327,7 +327,7 @@ PHP_METHOD(JsonSchema_Validator, reset)
 }
 /* }}} */
 
-/* {{{ proto int JsonSchema\Validator::getCheckMode()
+/* {{{ proto int JsonSchema\Ext\Validator::getCheckMode()
    Returns the current check mode */
 PHP_METHOD(JsonSchema_Validator, getCheckMode)
 {
@@ -339,7 +339,7 @@ PHP_METHOD(JsonSchema_Validator, getCheckMode)
 }
 /* }}} */
 
-/* {{{ proto void JsonSchema\Validator::setCheckMode(int $checkMode)
+/* {{{ proto void JsonSchema\Ext\Validator::setCheckMode(int $checkMode)
    Sets the check mode */
 PHP_METHOD(JsonSchema_Validator, setCheckMode)
 {
@@ -354,7 +354,7 @@ PHP_METHOD(JsonSchema_Validator, setCheckMode)
 }
 /* }}} */
 
-/* {{{ proto void JsonSchema\Validator::setRefResolver(?callable $resolver)
+/* {{{ proto void JsonSchema\Ext\Validator::setRefResolver(?callable $resolver)
    Sets the external $ref resolver callback */
 PHP_METHOD(JsonSchema_Validator, setRefResolver)
 {
@@ -383,7 +383,7 @@ PHP_METHOD(JsonSchema_Validator, setRefResolver)
 }
 /* }}} */
 
-/* {{{ proto void JsonSchema\Validator::setBaseUri(?string $baseUri)
+/* {{{ proto void JsonSchema\Ext\Validator::setBaseUri(?string $baseUri)
    Sets the base URI for relative $ref resolution */
 PHP_METHOD(JsonSchema_Validator, setBaseUri)
 {
@@ -620,8 +620,8 @@ PHP_MINIT_FUNCTION(json_schema)
 {
     zend_class_entry ce;
 
-    /* Register JsonSchema\Validator class */
-    INIT_NS_CLASS_ENTRY(ce, "JsonSchema", "Validator", json_schema_validator_methods);
+    /* Register JsonSchema\Ext\Validator class (JsonSchema\Validator is left to justinrainbow/json-schema) */
+    INIT_NS_CLASS_ENTRY(ce, "JsonSchema\\Ext", "Validator", json_schema_validator_methods);
     json_schema_validator_ce = zend_register_internal_class(&ce);
     json_schema_validator_ce->create_object = json_schema_validator_create_object;
 

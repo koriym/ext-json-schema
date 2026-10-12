@@ -367,35 +367,6 @@ static zval *registry_get_uri(json_schema_context *ctx, zend_string *uri)
     return (zval *)(uintptr_t)Z_LVAL_P(value);
 }
 
-static void schema_value_to_array(zval *src, zval *dst, int depth)
-{
-    if (depth >= JSON_SCHEMA_MAX_DEPTH) {
-        ZVAL_COPY(dst, src);
-        return;
-    }
-
-    if (Z_TYPE_P(src) == IS_OBJECT || Z_TYPE_P(src) == IS_ARRAY) {
-        HashTable *ht = (Z_TYPE_P(src) == IS_OBJECT) ? Z_OBJPROP_P(src) : Z_ARRVAL_P(src);
-        zend_string *key;
-        zend_ulong idx;
-        zval *value;
-
-        array_init(dst);
-        ZEND_HASH_FOREACH_KEY_VAL(ht, idx, key, value) {
-            zval converted;
-            schema_value_to_array(value, &converted, depth + 1);
-            if (key) {
-                zend_hash_update(Z_ARRVAL_P(dst), key, &converted);
-            } else {
-                zend_hash_index_update(Z_ARRVAL_P(dst), idx, &converted);
-            }
-        } ZEND_HASH_FOREACH_END();
-        return;
-    }
-
-    ZVAL_COPY(dst, src);
-}
-
 /* ============================================================================
  * Context Management
  * ========================================================================== */
@@ -435,6 +406,9 @@ json_schema_context *json_schema_context_create(int check_mode)
     zend_hash_init(ctx->schema_base_uris, 32, NULL, ZVAL_PTR_DTOR, 0);
     ALLOC_HASHTABLE(ctx->schema_uri_map);
     zend_hash_init(ctx->schema_uri_map, 32, NULL, NULL, 0);
+
+    ZVAL_UNDEF(&ctx->schema_copy);
+    ctx->fatal_error = NULL;
 
     return ctx;
 }
@@ -489,6 +463,9 @@ void json_schema_context_free(json_schema_context *ctx)
         zend_hash_destroy(ctx->schema_uri_map);
         FREE_HASHTABLE(ctx->schema_uri_map);
     }
+
+    zval_ptr_dtor(&ctx->schema_copy);
+    json_schema_free_error_chain(ctx->fatal_error);
 
     efree(ctx);
 }
@@ -837,6 +814,128 @@ int json_schema_is_type(zval *data, const char *type)
         return 0;
     }
 
+    return 0;
+}
+
+static int is_std_object(zval *zv)
+{
+    return Z_TYPE_P(zv) == IS_OBJECT && Z_OBJCE_P(zv) == zend_standard_class_def;
+}
+
+/*
+ * Whether the schema holds a stdClass or a reference, which the validator only reads through arrays.
+ * Nesting beyond JSON_SCHEMA_MAX_DEPTH also needs a copy, so that schema_to_array() reports it.
+ */
+static int schema_needs_copy(zval *schema, int depth)
+{
+    if (Z_ISREF_P(schema) || is_std_object(schema) || depth > JSON_SCHEMA_MAX_DEPTH) {
+        return 1;
+    }
+    if (Z_TYPE_P(schema) != IS_ARRAY) {
+        return 0;
+    }
+
+    zval *val;
+    ZEND_HASH_FOREACH_VAL(Z_ARRVAL_P(schema), val) {
+        if (schema_needs_copy(val, depth + 1)) {
+            return 1;
+        }
+    } ZEND_HASH_FOREACH_END();
+
+    return 0;
+}
+
+/*
+ * Copy a schema with references resolved and every stdClass turned into an array,
+ * keyed as json_decode($json, true) would.
+ * Fails on nesting deeper than JSON_SCHEMA_MAX_DEPTH, which includes cyclic object graphs.
+ */
+static zend_result schema_to_array(zval *dst, zval *src, int depth)
+{
+    ZVAL_DEREF(src);
+    if (depth > JSON_SCHEMA_MAX_DEPTH) {
+        return FAILURE;
+    }
+
+    HashTable *ht;
+    if (is_std_object(src)) {
+        ht = Z_OBJPROP_P(src);
+    } else if (Z_TYPE_P(src) == IS_ARRAY) {
+        ht = Z_ARRVAL_P(src);
+    } else {
+        ZVAL_COPY(dst, src);
+        return SUCCESS;
+    }
+
+    array_init_size(dst, zend_hash_num_elements(ht));
+
+    zend_string *key;
+    zend_ulong idx;
+    zval *val;
+    ZEND_HASH_FOREACH_KEY_VAL_IND(ht, idx, key, val) {
+        zval converted;
+        if (schema_to_array(&converted, val, depth + 1) == FAILURE) {
+            zval_ptr_dtor(dst);
+            ZVAL_UNDEF(dst);
+            return FAILURE;
+        }
+        if (key) {
+            zend_symtable_update(Z_ARRVAL_P(dst), key, &converted);
+        } else {
+            zend_hash_index_update(Z_ARRVAL_P(dst), idx, &converted);
+        }
+    } ZEND_HASH_FOREACH_END();
+
+    return SUCCESS;
+}
+
+/* Keep the error just added so that it fails the validation even if a combinator drops it */
+static int keep_fatal_error(json_schema_context *ctx)
+{
+    if (!ctx->fatal_error) {
+        json_schema_error *added = ctx->errors_tail;
+        json_schema_error *kept = emalloc(sizeof(json_schema_error));
+        kept->message = zend_string_copy(added->message);
+        kept->property = zend_string_copy(added->property);
+        kept->pointer = zend_string_copy(added->pointer);
+        kept->constraint = added->constraint;
+        kept->next = NULL;
+        ctx->fatal_error = kept;
+    }
+    return 0;
+}
+
+static int invalid_schema_error(zval *schema, json_schema_context *ctx)
+{
+    char msg[256];
+    snprintf(msg, sizeof(msg), "Invalid schema: expected object or boolean, got %s",
+        Z_TYPE_P(schema) == IS_OBJECT ? ZSTR_VAL(Z_OBJCE_P(schema)->name) : zend_zval_type_name(schema));
+    json_schema_context_add_error(ctx, JSON_SCHEMA_ERROR_TYPE_MISMATCH, msg, NULL);
+    return keep_fatal_error(ctx);
+}
+
+static int report_fatal_error(json_schema_context *ctx, int valid)
+{
+    json_schema_error *kept = ctx->fatal_error;
+    if (!kept) {
+        return valid;
+    }
+    ctx->fatal_error = NULL;
+
+    for (json_schema_error *e = ctx->errors; e; e = e->next) {
+        if (zend_string_equals(e->message, kept->message) && zend_string_equals(e->pointer, kept->pointer)) {
+            json_schema_free_error_chain(kept);
+            return 0;
+        }
+    }
+
+    if (ctx->errors_tail) {
+        ctx->errors_tail->next = kept;
+    } else {
+        ctx->errors = kept;
+    }
+    ctx->errors_tail = kept;
+    ctx->error_count++;
     return 0;
 }
 
@@ -1399,6 +1498,20 @@ int json_schema_validate_max_properties(zval *data, zend_long max_props, json_sc
     return 1;
 }
 
+/* PHP arrays store numeric-string keys such as "0" as integers; object property tables keep them as strings */
+static int has_property(zval *data, zend_string *name)
+{
+    if (Z_TYPE_P(data) == IS_ARRAY) {
+        return zend_symtable_exists(Z_ARRVAL_P(data), name);
+    }
+    return zend_hash_exists(Z_OBJPROP_P(data), name);
+}
+
+static zend_string *property_name(zend_string *key, zend_ulong idx)
+{
+    return key ? zend_string_copy(key) : zend_long_to_str((zend_long)idx);
+}
+
 int json_schema_validate_required(zval *data, zval *required, json_schema_context *ctx)
 {
     if (Z_TYPE_P(data) != IS_ARRAY && Z_TYPE_P(data) != IS_OBJECT) {
@@ -1408,7 +1521,6 @@ int json_schema_validate_required(zval *data, zval *required, json_schema_contex
         return 1;
     }
 
-    HashTable *obj = (Z_TYPE_P(data) == IS_ARRAY) ? Z_ARRVAL_P(data) : Z_OBJPROP_P(data);
     zval *prop_name;
     int valid = 1;
 
@@ -1417,7 +1529,7 @@ int json_schema_validate_required(zval *data, zval *required, json_schema_contex
             continue;
         }
 
-        if (!zend_hash_exists(obj, Z_STR_P(prop_name))) {
+        if (!has_property(data, Z_STR_P(prop_name))) {
             char msg[256];
             snprintf(msg, sizeof(msg), "Required property '%s' is missing", Z_STRVAL_P(prop_name));
             json_schema_context_add_error(ctx, JSON_SCHEMA_ERROR_REQUIRED_PROPERTY, msg, Z_STRVAL_P(prop_name));
@@ -1435,13 +1547,14 @@ int json_schema_validate_property_names(zval *data, zval *property_names_schema,
     }
 
     HashTable *obj = (Z_TYPE_P(data) == IS_ARRAY) ? Z_ARRVAL_P(data) : Z_OBJPROP_P(data);
-    zend_string *key;
+    zend_string *raw_key;
+    zend_ulong idx;
     int valid = 1;
 
-    ZEND_HASH_FOREACH_STR_KEY(obj, key) {
-        if (!key) continue;
-
+    ZEND_HASH_FOREACH_KEY(obj, idx, raw_key) {
+        zend_string *key = property_name(raw_key, idx);
         zval key_val;
+        /* Type coercion may replace key_val, so the message keeps its own reference */
         ZVAL_STR_COPY(&key_val, key);
 
         int errors_before = ctx->error_count;
@@ -1455,6 +1568,7 @@ int json_schema_validate_property_names(zval *data, zval *property_names_schema,
         }
 
         zval_ptr_dtor(&key_val);
+        zend_string_release(key);
     } ZEND_HASH_FOREACH_END();
 
     return valid;
@@ -1462,6 +1576,50 @@ int json_schema_validate_property_names(zval *data, zval *property_names_schema,
 
 /* Forward declaration */
 static int validate_against_schema(zval *data, zval *schema, json_schema_context *ctx);
+
+static int validate_dependency(zval *data, zend_string *dep_key, zval *dep_value, json_schema_context *ctx)
+{
+    if (!has_property(data, dep_key)) {
+        return 1;
+    }
+
+    if (Z_TYPE_P(dep_value) == IS_TRUE) {
+        return 1;
+    }
+    if (Z_TYPE_P(dep_value) == IS_FALSE) {
+        char msg[256];
+        snprintf(msg, sizeof(msg), "Dependency failed: '%s' has false schema",
+            ZSTR_VAL(dep_key));
+        json_schema_context_add_error(ctx, JSON_SCHEMA_ERROR_REQUIRED_PROPERTY, msg, NULL);
+        return 0;
+    }
+    if (Z_TYPE_P(dep_value) != IS_ARRAY) {
+        return invalid_schema_error(dep_value, ctx);
+    }
+
+    /* Dependency can be an array of required properties or a schema */
+    zval *first = zend_hash_index_find(Z_ARRVAL_P(dep_value), 0);
+    if (!first || Z_TYPE_P(first) != IS_STRING) {
+        return validate_against_schema(data, dep_value, ctx);
+    }
+
+    int valid = 1;
+    zval *required_prop;
+    ZEND_HASH_FOREACH_VAL(Z_ARRVAL_P(dep_value), required_prop) {
+        if (Z_TYPE_P(required_prop) != IS_STRING) continue;
+
+        if (!has_property(data, Z_STR_P(required_prop))) {
+            char msg[256];
+            snprintf(msg, sizeof(msg), "Dependency failed: '%s' requires '%s'",
+                ZSTR_VAL(dep_key), Z_STRVAL_P(required_prop));
+            json_schema_context_add_error(ctx, JSON_SCHEMA_ERROR_REQUIRED_PROPERTY, msg,
+                Z_STRVAL_P(required_prop));
+            valid = 0;
+        }
+    } ZEND_HASH_FOREACH_END();
+
+    return valid;
+}
 
 /* Dependencies validation */
 int json_schema_validate_dependencies(zval *data, zval *dependencies, json_schema_context *ctx)
@@ -1473,61 +1631,17 @@ int json_schema_validate_dependencies(zval *data, zval *dependencies, json_schem
         return 1;
     }
 
-    HashTable *data_ht = (Z_TYPE_P(data) == IS_ARRAY) ? Z_ARRVAL_P(data) : Z_OBJPROP_P(data);
-    zend_string *dep_key;
+    zend_string *raw_key;
+    zend_ulong idx;
     zval *dep_value;
     int valid = 1;
 
-    ZEND_HASH_FOREACH_STR_KEY_VAL(Z_ARRVAL_P(dependencies), dep_key, dep_value) {
-        if (!dep_key) continue;
-
-        /* Check if the property exists in data */
-        if (!zend_hash_exists(data_ht, dep_key)) {
-            continue; /* Property not present, dependency doesn't apply */
-        }
-
-        /* Handle boolean schemas */
-        if (Z_TYPE_P(dep_value) == IS_TRUE) {
-            /* true schema always passes */
-            continue;
-        }
-        if (Z_TYPE_P(dep_value) == IS_FALSE) {
-            /* false schema always fails */
-            char msg[256];
-            snprintf(msg, sizeof(msg), "Dependency failed: '%s' has false schema",
-                ZSTR_VAL(dep_key));
-            json_schema_context_add_error(ctx, JSON_SCHEMA_ERROR_REQUIRED_PROPERTY, msg, NULL);
+    ZEND_HASH_FOREACH_KEY_VAL(Z_ARRVAL_P(dependencies), idx, raw_key, dep_value) {
+        zend_string *dep_key = property_name(raw_key, idx);
+        if (!validate_dependency(data, dep_key, dep_value, ctx)) {
             valid = 0;
-            continue;
         }
-
-        /* Dependency can be an array of required properties or a schema */
-        if (Z_TYPE_P(dep_value) == IS_ARRAY) {
-            /* Check if it's an array of strings (property dependencies) or a schema */
-            zval *first = zend_hash_index_find(Z_ARRVAL_P(dep_value), 0);
-
-            if (first && Z_TYPE_P(first) == IS_STRING) {
-                /* Array of required property names */
-                zval *required_prop;
-                ZEND_HASH_FOREACH_VAL(Z_ARRVAL_P(dep_value), required_prop) {
-                    if (Z_TYPE_P(required_prop) != IS_STRING) continue;
-
-                    if (!zend_hash_exists(data_ht, Z_STR_P(required_prop))) {
-                        char msg[256];
-                        snprintf(msg, sizeof(msg), "Dependency failed: '%s' requires '%s'",
-                            ZSTR_VAL(dep_key), Z_STRVAL_P(required_prop));
-                        json_schema_context_add_error(ctx, JSON_SCHEMA_ERROR_REQUIRED_PROPERTY, msg,
-                            Z_STRVAL_P(required_prop));
-                        valid = 0;
-                    }
-                } ZEND_HASH_FOREACH_END();
-            } else {
-                /* Schema dependency */
-                if (!validate_against_schema(data, dep_value, ctx)) {
-                    valid = 0;
-                }
-            }
-        }
+        zend_string_release(dep_key);
     } ZEND_HASH_FOREACH_END();
 
     return valid;
@@ -1743,7 +1857,7 @@ int json_schema_validate_format(zval *data, zend_string *format, json_schema_con
 int json_schema_validate_all_of(zval *data, zval *schemas, json_schema_context *ctx)
 {
     if (Z_TYPE_P(schemas) != IS_ARRAY) {
-        return 1;
+        return invalid_schema_error(schemas, ctx);
     }
 
     zval *schema;
@@ -1766,7 +1880,7 @@ int json_schema_validate_all_of(zval *data, zval *schemas, json_schema_context *
 int json_schema_validate_any_of(zval *data, zval *schemas, json_schema_context *ctx)
 {
     if (Z_TYPE_P(schemas) != IS_ARRAY) {
-        return 1;
+        return invalid_schema_error(schemas, ctx);
     }
 
     zval *schema;
@@ -1793,7 +1907,7 @@ int json_schema_validate_any_of(zval *data, zval *schemas, json_schema_context *
 int json_schema_validate_one_of(zval *data, zval *schemas, json_schema_context *ctx)
 {
     if (Z_TYPE_P(schemas) != IS_ARRAY) {
-        return 1;
+        return invalid_schema_error(schemas, ctx);
     }
 
     zval *schema;
@@ -1848,7 +1962,7 @@ int json_schema_validate_if_then_else(zval *data, zval *if_schema, zval *then_sc
     json_schema_context_truncate_errors(ctx, original_error_count);
 
     if (if_passed) {
-        if (then_schema && Z_TYPE_P(then_schema) != IS_NULL) {
+        if (then_schema) {
             if (!validate_against_schema(data, then_schema, ctx)) {
                 json_schema_context_add_error(ctx, JSON_SCHEMA_ERROR_IF_THEN_ELSE,
                     "Value matches 'if' but does not match 'then'", NULL);
@@ -1856,7 +1970,7 @@ int json_schema_validate_if_then_else(zval *data, zval *if_schema, zval *then_sc
             }
         }
     } else {
-        if (else_schema && Z_TYPE_P(else_schema) != IS_NULL) {
+        if (else_schema) {
             if (!validate_against_schema(data, else_schema, ctx)) {
                 json_schema_context_add_error(ctx, JSON_SCHEMA_ERROR_IF_THEN_ELSE,
                     "Value does not match 'if' and does not match 'else'", NULL);
@@ -2183,9 +2297,9 @@ static zval *json_schema_resolver_fetch(json_schema_context *ctx, zend_string *d
         fci.retval = &retval;
 
         if (zend_call_function(&fci, &fcc) == SUCCESS) {
-            if (Z_TYPE(retval) == IS_ARRAY || Z_TYPE(retval) == IS_OBJECT) {
-                zval normalized;
-                schema_value_to_array(&retval, &normalized, 0);
+            zval normalized;
+            if ((Z_TYPE(retval) == IS_ARRAY || is_std_object(&retval))
+                && schema_to_array(&normalized, &retval, 0) == SUCCESS) {
                 zval_ptr_dtor(&retval);
                 zend_hash_update(ctx->resolved_schemas, doc_uri, &normalized);
                 external_schema = zend_hash_find(ctx->resolved_schemas, doc_uri);
@@ -2384,8 +2498,9 @@ static int validate_against_schema(zval *data, zval *schema, json_schema_context
     }
 
     if (Z_TYPE_P(schema) != IS_ARRAY) {
+        invalid_schema_error(schema, ctx);
         ctx->depth--;
-        return 1; /* Empty schema validates everything */
+        return 0;
     }
 
     HashTable *schema_ht = Z_ARRVAL_P(schema);
@@ -2535,10 +2650,8 @@ static int validate_against_schema(zval *data, zval *schema, json_schema_context
             zend_ulong idx = 0;
 
             if (Z_TYPE_P(val) == IS_ARRAY) {
-                /* Check if it's a schema or tuple validation */
-                zval *first = zend_hash_index_find(Z_ARRVAL_P(val), 0);
-
-                if (first && (Z_TYPE_P(first) == IS_ARRAY || Z_TYPE_P(first) == IS_TRUE || Z_TYPE_P(first) == IS_FALSE)) {
+                /* A list of schemas is tuple validation; an object is a single schema */
+                if (zend_hash_num_elements(Z_ARRVAL_P(val)) > 0 && zend_array_is_list(Z_ARRVAL_P(val))) {
                     /* Tuple validation - items is an array of schemas */
                     zend_ulong items_count = zend_hash_num_elements(Z_ARRVAL_P(val));
 
@@ -2568,6 +2681,8 @@ static int validate_against_schema(zval *data, zval *schema, json_schema_context
                                         valid = 0;
                                     }
                                     json_schema_context_pop_path(ctx);
+                                } else if (Z_TYPE_P(additional_items) != IS_TRUE) {
+                                    valid = invalid_schema_error(additional_items, ctx);
                                 }
                                 /* true or not present = allow any additional items */
                             }
@@ -2592,6 +2707,8 @@ static int validate_against_schema(zval *data, zval *schema, json_schema_context
                         "Array items are not allowed", NULL);
                     valid = 0;
                 }
+            } else if (Z_TYPE_P(val) != IS_TRUE) {
+                valid = invalid_schema_error(val, ctx);
             }
             /* items: true - all items allowed (default) */
         }
@@ -2633,23 +2750,30 @@ static int validate_against_schema(zval *data, zval *schema, json_schema_context
         zval *pattern_properties = zend_hash_str_find(schema_ht, "patternProperties", 17);
         zval *additional_properties = zend_hash_str_find(schema_ht, "additionalProperties", 20);
 
+        if (properties && Z_TYPE_P(properties) != IS_ARRAY) {
+            valid = invalid_schema_error(properties, ctx);
+        }
+        if (pattern_properties && Z_TYPE_P(pattern_properties) != IS_ARRAY) {
+            valid = invalid_schema_error(pattern_properties, ctx);
+        }
+
         /* Run if any of properties, patternProperties, or additionalProperties are present */
         if ((properties && Z_TYPE_P(properties) == IS_ARRAY) ||
             (pattern_properties && Z_TYPE_P(pattern_properties) == IS_ARRAY) ||
             additional_properties) {
 
             HashTable *data_ht = (Z_TYPE_P(data) == IS_ARRAY) ? Z_ARRVAL_P(data) : Z_OBJPROP_P(data);
-            zend_string *key;
+            zend_string *raw_key;
+            zend_ulong idx;
             zval *prop_val;
 
-            ZEND_HASH_FOREACH_STR_KEY_VAL(data_ht, key, prop_val) {
-                if (!key) continue;
-
+            ZEND_HASH_FOREACH_KEY_VAL(data_ht, idx, raw_key, prop_val) {
+                zend_string *key = property_name(raw_key, idx);
                 int matched = 0;
 
                 /* Check properties */
                 if (properties && Z_TYPE_P(properties) == IS_ARRAY) {
-                    zval *prop_schema = zend_hash_find(Z_ARRVAL_P(properties), key);
+                    zval *prop_schema = zend_symtable_find(Z_ARRVAL_P(properties), key);
                     if (prop_schema) {
                         json_schema_context_push_path(ctx, ZSTR_VAL(key));
                         if (!validate_against_schema(prop_val, prop_schema, ctx)) {
@@ -2662,15 +2786,16 @@ static int validate_against_schema(zval *data, zval *schema, json_schema_context
 
                 /* Pattern properties */
                 if (pattern_properties && Z_TYPE_P(pattern_properties) == IS_ARRAY) {
-                    zend_string *pattern;
+                    zend_string *raw_pattern;
+                    zend_ulong pattern_idx;
                     zval *pattern_schema;
 
-                    ZEND_HASH_FOREACH_STR_KEY_VAL(Z_ARRVAL_P(pattern_properties), pattern, pattern_schema) {
-                        if (!pattern) continue;
-
+                    ZEND_HASH_FOREACH_KEY_VAL(Z_ARRVAL_P(pattern_properties), pattern_idx, raw_pattern, pattern_schema) {
+                        zend_string *pattern = property_name(raw_pattern, pattern_idx);
                         smart_str regex = {0};
                         smart_str_appendc(&regex, '/');
                         smart_str_append(&regex, pattern);
+                        zend_string_release(pattern);
                         smart_str_appendc(&regex, '/');
                         smart_str_appendc(&regex, 'u');
                         smart_str_0(&regex);
@@ -2716,8 +2841,11 @@ static int validate_against_schema(zval *data, zval *schema, json_schema_context
                             valid = 0;
                         }
                         json_schema_context_pop_path(ctx);
+                    } else if (Z_TYPE_P(additional_properties) != IS_TRUE) {
+                        valid = invalid_schema_error(additional_properties, ctx);
                     }
                 }
+                zend_string_release(key);
             } ZEND_HASH_FOREACH_END();
         }
 
@@ -2783,6 +2911,15 @@ static int validate_against_schema(zval *data, zval *schema, json_schema_context
 
 int json_schema_validate(zval *data, zval *schema, json_schema_context *ctx)
 {
+    if (schema_needs_copy(schema, 0)) {
+        if (schema_to_array(&ctx->schema_copy, schema, 0) == FAILURE) {
+            json_schema_context_add_error(ctx, JSON_SCHEMA_ERROR_TYPE_MISMATCH,
+                "Maximum validation depth exceeded (possible circular reference)", NULL);
+            return 0;
+        }
+        schema = &ctx->schema_copy;
+    }
+
     /* Store root schema for $ref resolution */
     ctx->root_schema = schema;
 
@@ -2803,5 +2940,5 @@ int json_schema_validate(zval *data, zval *schema, json_schema_context *ctx)
         }
     }
 
-    return validate_against_schema(data, schema, ctx);
+    return report_fatal_error(ctx, validate_against_schema(data, schema, ctx));
 }

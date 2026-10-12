@@ -83,7 +83,7 @@ $valid = json_schema_validate($data, $schema, JsonSchema\Constraint::CHECK_MODE_
 ### OOP API
 
 ```php
-$validator = new JsonSchema\Validator();
+$validator = new JsonSchema\Ext\Validator();
 $validator->validate($data, $schema);
 
 if ($validator->isValid()) {
@@ -109,6 +109,13 @@ $validator->getErrors();    // Compatible error format
 $validator->numErrors();
 $validator->reset();
 ```
+
+Schemas can be arrays, `stdClass` objects (`json_decode()` default), or booleans. A value in a schema position that is none of these is reported as a validation error.
+
+## Breaking Changes
+
+- The OOP class is renamed from `JsonSchema\Validator` to `JsonSchema\Ext\Validator`. The extension no longer registers `JsonSchema\Validator`, so loading it does not replace the class of the same name in jsonrainbow/json-schema.
+- Invalid schemas (for example a string or `null`) now fail validation instead of passing.
 
 ## Error Format
 

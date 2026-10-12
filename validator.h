@@ -75,6 +75,11 @@ typedef struct _json_schema_context {
     int draft;                           /* Draft mode for id/$id semantics */
     HashTable *schema_base_uris;         /* schema zval pointer -> base URI */
     HashTable *schema_uri_map;           /* canonical URI/anchor -> schema zval pointer */
+
+    zval schema_copy;                    /* Array-only copy of the root schema; owns ctx->root_schema when set */
+
+    /* First error that fails the validation regardless of combinators, which truncate the error list */
+    json_schema_error *fatal_error;
 } json_schema_context;
 
 /* ============================================================================

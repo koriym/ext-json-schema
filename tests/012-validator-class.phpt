@@ -1,11 +1,11 @@
 --TEST--
-JsonSchema\Validator class functionality
+JsonSchema\Ext\Validator class functionality
 --EXTENSIONS--
 json_schema
 --FILE--
 <?php
 
-use JsonSchema\Validator;
+use JsonSchema\Ext\Validator;
 use JsonSchema\Constraint;
 
 $validator = new Validator();

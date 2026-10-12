@@ -47,7 +47,7 @@ USE_ZEND_ALLOC=0 ZEND_DONT_UNLOAD_MODULES=1 make test TESTS=tests/*.phpt TEST_PH
 ## Architecture
 
 ### C Extension Layer
-- `json_schema.c` - PHP extension entry point, class definitions (`JsonSchema\Validator`), procedural API (`json_schema_validate()`, `json_schema_get_errors()`)
+- `json_schema.c` - PHP extension entry point, class definitions (`JsonSchema\Ext\Validator`), procedural API (`json_schema_validate()`, `json_schema_get_errors()`)
 - `validator.c` / `validator.h` - Core validation logic for all JSON Schema keywords
 - `php_json_schema.h` - Extension header with constants and error codes
 
@@ -58,7 +58,7 @@ USE_ZEND_ALLOC=0 ZEND_DONT_UNLOAD_MODULES=1 make test TESTS=tests/*.phpt TEST_PH
 
 ### Two APIs
 1. **Procedural**: `json_schema_validate($data, $schema)` - returns bool
-2. **OOP**: `new \JsonSchema\Validator()` with `validate()`, `isValid()`, `getErrors()`
+2. **OOP**: `new \JsonSchema\Ext\Validator()` with `validate()`, `isValid()`, `getErrors()`
 3. **Adapter**: `new \JsonSchema\ValidatorAdapter()` - drop-in replacement for jsonrainbow/json-schema
 
 ## Test Structure

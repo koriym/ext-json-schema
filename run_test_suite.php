@@ -48,6 +48,9 @@ $failedTests = 0;
 $skippedTests = 0;
 $failures = [];
 $missingDrafts = [];
+// Each test runs with the schema as arrays and as stdClass (json_decode default)
+$passedByMode = ['array' => 0, 'stdClass' => 0];
+$modeMismatches = [];
 
 /**
  * Convert stdClass objects to arrays recursively for schema.
@@ -181,8 +184,7 @@ foreach ($drafts as $draft) {
                 }
             }
 
-            // Convert schema to array for our extension
-            $schema = schemaToArray($group->schema);
+            $schemas = ['array' => schemaToArray($group->schema), 'stdClass' => $group->schema];
             $tests = $group->tests ?? [];
 
             foreach ($tests as $test) {
@@ -208,25 +210,36 @@ foreach ($drafts as $draft) {
                 $data = $test->data;
                 $expectedValid = $test->valid;
 
-                $result = json_schema_validate($data, $schema, 1, [
-                    'resolver' => 'resolveTestSuiteRemote',
-                    'draft' => $draft,
-                ]);
-
-                if ($result === $expectedValid) {
-                    $passedTests++;
-                } else {
-                    $failedTests++;
+                $results = [];
+                foreach ($schemas as $mode => $schema) {
+                    $result = json_schema_validate($data, $schema, 1, [
+                        'resolver' => 'resolveTestSuiteRemote',
+                        'draft' => $draft,
+                    ]);
+                    $results[$mode] = $result;
+                    if ($result === $expectedValid) {
+                        $passedByMode[$mode]++;
+                        continue;
+                    }
                     $failures[] = [
                         'draft' => $draft,
                         'file' => $filename,
                         'group' => $groupDesc,
-                        'test' => $testDesc,
+                        'test' => "$testDesc ($mode schema)",
                         'expected' => $expectedValid ? 'valid' : 'invalid',
                         'got' => $result ? 'valid' : 'invalid',
                         'data' => $data,
                         'schema' => $schema,
                     ];
+                }
+
+                if ($results['array'] !== $results['stdClass']) {
+                    $modeMismatches[] = "$draft/$filename: $groupDesc - $testDesc";
+                }
+                if ($results['array'] === $expectedValid && $results['stdClass'] === $expectedValid) {
+                    $passedTests++;
+                } else {
+                    $failedTests++;
                 }
             }
         }
@@ -238,6 +251,12 @@ echo "Total: $totalTests\n";
 echo "Passed: $passedTests\n";
 echo "Failed: $failedTests\n";
 echo "Skipped: $skippedTests\n";
+echo "Passed with array schema: {$passedByMode['array']}\n";
+echo "Passed with stdClass schema: {$passedByMode['stdClass']}\n";
+echo "array/stdClass mismatches: " . count($modeMismatches) . "\n";
+foreach (array_slice($modeMismatches, 0, 10) as $mismatch) {
+    echo "  - $mismatch\n";
+}
 
 if ($missingDrafts !== []) {
     echo "Missing drafts: " . implode(', ', $missingDrafts) . "\n";

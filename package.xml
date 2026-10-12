@@ -30,7 +30,7 @@ Initial beta release.
 - Circular reference detection and recursion depth limits
 - RFC 6901 compliant JSON Pointer handling
 - Procedural API: json_schema_validate(), json_schema_get_errors()
-- OOP API: JsonSchema\Validator class
+- OOP API: JsonSchema\Ext\Validator class
  </notes>
  <contents>
   <dir name="/">
