@@ -941,6 +941,17 @@ static int report_fatal_error(json_schema_context *ctx, int valid)
 
 #define COMPARE_DEPTH_EXCEEDED "Maximum comparison depth exceeded"
 
+/* splitmix64 finalizer */
+static zend_ulong mix_hash(uint64_t x)
+{
+    x ^= x >> 30;
+    x *= UINT64_C(0xbf58476d1ce4e5b9);
+    x ^= x >> 27;
+    x *= UINT64_C(0x94d049bb133111eb);
+    x ^= x >> 31;
+    return (zend_ulong)x;
+}
+
 /* Compute hash for a JSON value - used for O(n) uniqueItems check */
 static zend_ulong json_schema_value_hash(zval *val, int depth, int *too_deep)
 {
@@ -970,43 +981,46 @@ static zend_ulong json_schema_value_hash(zval *val, int depth, int *too_deep)
                 return hash;
             }
             HashTable *ht = (Z_TYPE_P(val) == IS_ARRAY) ? Z_ARRVAL_P(val) : Z_OBJPROP_P(val);
-            zend_ulong count = zend_hash_num_elements(ht);
-            hash ^= count << 8;
+            /* Arrays and objects with the same members are equal, so they must hash alike */
+            hash = IS_ARRAY ^ ((zend_ulong)zend_hash_num_elements(ht) << 8);
 
-            /* Check if this is an associative array (object-like) by looking for string keys */
-            int has_string_key = 0;
             zend_string *key;
             zend_ulong idx;
             zval *elem;
-            ZEND_HASH_FOREACH_KEY(ht, idx, key) {
-                if (key) {
-                    has_string_key = 1;
-                    break;
+            ZEND_HASH_FOREACH_KEY_VAL(ht, idx, key, elem) {
+                zend_ulong key_hash = idx;
+                if (key && !ZEND_HANDLE_NUMERIC_STR(ZSTR_VAL(key), ZSTR_LEN(key), key_hash)) {
+                    key_hash = ZSTR_HASH(key);
                 }
+                /* XOR keeps member order out of the hash; mixing each member stops equal values from cancelling out */
+                hash ^= mix_hash((key_hash * 31) ^ json_schema_value_hash(elem, depth + 1, too_deep));
             } ZEND_HASH_FOREACH_END();
-
-            if (has_string_key) {
-                /* For objects/associative arrays: use XOR for order-independence */
-                ZEND_HASH_FOREACH_KEY_VAL(ht, idx, key, elem) {
-                    zend_ulong elem_hash = 0;
-                    if (key) {
-                        elem_hash = ZSTR_HASH(key);
-                    }
-                    /* Mix key hash with value hash using multiplication to avoid simple XOR cancellation */
-                    elem_hash = (elem_hash * 31) ^ json_schema_value_hash(elem, depth + 1, too_deep);
-                    hash ^= elem_hash;  /* XOR is commutative - order independent */
-                } ZEND_HASH_FOREACH_END();
-            } else {
-                /* For numeric arrays: order matters, use position-sensitive hashing */
-                ZEND_HASH_FOREACH_KEY_VAL(ht, idx, key, elem) {
-                    hash = (hash * 31) ^ (idx << 4) ^ json_schema_value_hash(elem, depth + 1, too_deep);
-                } ZEND_HASH_FOREACH_END();
-            }
             return hash;
         }
         default:
             return hash;
     }
+}
+
+/* A numeric member name is an integer key in an array and a string key in an object */
+static zval *find_member(HashTable *ht, zend_string *key, zend_ulong idx)
+{
+    if (!key) {
+        zval *found = zend_hash_index_find(ht, idx);
+        if (found) {
+            return found;
+        }
+        zend_string *name = zend_long_to_str((zend_long)idx);
+        found = zend_hash_find(ht, name);
+        zend_string_release(name);
+        return found;
+    }
+
+    zval *found = zend_hash_find(ht, key);
+    if (!found && ZEND_HANDLE_NUMERIC_STR(ZSTR_VAL(key), ZSTR_LEN(key), idx)) {
+        found = zend_hash_index_find(ht, idx);
+    }
+    return found;
 }
 
 int json_schema_values_equal(zval *a, zval *b, int depth)
@@ -1036,12 +1050,7 @@ int json_schema_values_equal(zval *a, zval *b, int depth)
         zval *val_a;
 
         ZEND_HASH_FOREACH_KEY_VAL(ht_a, idx, key, val_a) {
-            zval *val_b;
-            if (key) {
-                val_b = zend_hash_find(ht_b, key);
-            } else {
-                val_b = zend_hash_index_find(ht_b, idx);
-            }
+            zval *val_b = find_member(ht_b, key, idx);
             if (!val_b) {
                 return 0;
             }
