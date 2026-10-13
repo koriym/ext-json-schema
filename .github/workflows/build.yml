@@ -55,6 +55,10 @@ jobs:
       - name: Run PHPUnit tests
         run: php -dextension=./modules/json_schema.so vendor/bin/phpunit
 
+      - name: Run quick benchmark
+        if: matrix.php-version == '8.3'
+        run: composer bench:quick
+
       - name: Run PHPUnit tests with coverage
         if: matrix.php-version == '8.3'
         run: php -dextension=./modules/json_schema.so vendor/bin/phpunit --coverage-clover=coverage.xml

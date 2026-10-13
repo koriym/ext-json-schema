@@ -55,11 +55,11 @@ $validator = new Validator();
 
 // Test valid data
 $result = $validator->validate($validData, $schema);
-echo "   Valid data: " . (!$result ? "PASSED" : "FAILED") . "\n";
+echo "   Valid data: " . ($result ? "PASSED" : "FAILED") . "\n";
 
 // Test invalid data
 $result = $validator->validate($invalidData, $schema);
-echo "   Invalid data: " . ($result ? "PASSED" : "FAILED") . "\n";
+echo "   Invalid data: " . (!$result ? "PASSED" : "FAILED") . "\n";
 if (!$validator->isValid()) {
     echo "   Errors found: " . count($validator->getErrors()) . "\n";
     foreach ($validator->getErrors() as $error) {

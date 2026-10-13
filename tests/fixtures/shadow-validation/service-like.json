@@ -1,0 +1,102 @@
+{
+  "cases": [
+    {
+      "name": "registration valid",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "id": {"type": "integer", "minimum": 1},
+          "name": {"type": "string", "minLength": 1},
+          "role": {"enum": ["user", "admin"]},
+          "tags": {"type": "array", "items": {"type": "string"}, "uniqueItems": true}
+        },
+        "required": ["id", "name", "role"],
+        "additionalProperties": false
+      },
+      "data": {"id": 1001, "name": "Akihito", "role": "admin", "tags": ["php", "json-schema"]}
+    },
+    {
+      "name": "registration invalid",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "id": {"type": "integer", "minimum": 1},
+          "name": {"type": "string", "minLength": 1},
+          "role": {"enum": ["user", "admin"]},
+          "tags": {"type": "array", "items": {"type": "string"}, "uniqueItems": true}
+        },
+        "required": ["id", "name", "role"],
+        "additionalProperties": false
+      },
+      "data": {"id": 0, "name": "", "role": "guest", "tags": ["php", "php"]}
+    },
+    {
+      "name": "local ref order valid",
+      "options": {"draft": "draft7"},
+      "schema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {
+          "customer": {"$ref": "#/definitions/customer"},
+          "shipping": {"$ref": "#/definitions/address"}
+        },
+        "required": ["customer", "shipping"],
+        "definitions": {
+          "customer": {
+            "type": "object",
+            "properties": {
+              "name": {"type": "string", "minLength": 1},
+              "tier": {"enum": ["standard", "premium"]}
+            },
+            "required": ["name", "tier"],
+            "additionalProperties": false
+          },
+          "address": {
+            "type": "object",
+            "properties": {
+              "zip": {"type": "string", "pattern": "^[0-9]{5}$"},
+              "country": {"type": "string", "minLength": 2, "maxLength": 2}
+            },
+            "required": ["zip", "country"],
+            "additionalProperties": false
+          }
+        }
+      },
+      "data": {"customer": {"name": "Koriym", "tier": "premium"}, "shipping": {"zip": "10000", "country": "JP"}}
+    },
+    {
+      "name": "local ref order invalid",
+      "options": {"draft": "draft7"},
+      "schema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {
+          "customer": {"$ref": "#/definitions/customer"},
+          "shipping": {"$ref": "#/definitions/address"}
+        },
+        "required": ["customer", "shipping"],
+        "definitions": {
+          "customer": {
+            "type": "object",
+            "properties": {
+              "name": {"type": "string", "minLength": 1},
+              "tier": {"enum": ["standard", "premium"]}
+            },
+            "required": ["name", "tier"],
+            "additionalProperties": false
+          },
+          "address": {
+            "type": "object",
+            "properties": {
+              "zip": {"type": "string", "pattern": "^[0-9]{5}$"},
+              "country": {"type": "string", "minLength": 2, "maxLength": 2}
+            },
+            "required": ["zip", "country"],
+            "additionalProperties": false
+          }
+        }
+      },
+      "data": {"customer": {"name": "", "tier": "gold"}, "shipping": {"zip": "abc", "country": "Japan"}}
+    }
+  ]
+}

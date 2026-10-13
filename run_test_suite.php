@@ -12,14 +12,17 @@ if (!extension_loaded('json_schema')) {
 $testSuiteDir = __DIR__ . '/JSON-Schema-Test-Suite/tests';
 $remotesDir = __DIR__ . '/JSON-Schema-Test-Suite/remotes';
 
+if (!is_dir($testSuiteDir)) {
+    fwrite(STDERR, "JSON Schema Test Suite not found: $testSuiteDir\n");
+    fwrite(STDERR, "Run: git submodule update --init --recursive\n");
+    exit(1);
+}
+
 // Drafts to test
 $drafts = ['draft4', 'draft6', 'draft7'];
 
 // Files to skip (not implemented or require external features)
 $skipFiles = [
-    'refRemote.json',           // Requires HTTP server for remote refs
-    'infinite-loop-detection.json', // Special case
-    'definitions.json',         // Requires metaschema validation
 ];
 
 // Individual tests to skip
@@ -37,38 +40,6 @@ $skipTests = [
         'validation of regexes',
         'validation of duration',
     ],
-    // $ref tests that require advanced features
-    'ref.json' => [
-        'remote ref, containing refs itself',   // Requires HTTP
-        '$ref prevents a sibling',              // Complex $id handling
-        'Location-independent identifier',      // $id in definitions
-        'Recursive references between schemas', // Recursive refs
-        'ref overrides any sibling keywords',   // $ref behavior
-        'refs with relative uris and defs',     // Relative URI
-        '$id must be resolved against nearest', // $id resolution
-        'id must be resolved against nearest',  // id resolution (draft4)
-        'simple URN base URI',                  // URN refs
-        'URN base URI with',                    // URN refs
-        'URN ref with nested',                  // URN refs
-        'ref to if',                            // $ref to if/then/else
-        'ref to then',                          // $ref to if/then/else
-        'ref to else',                          // $ref to if/then/else
-        'Reference an anchor',                  // Anchor refs
-        'relative refs with absolute uris',     // Absolute URI refs
-        'ref with absolute-path-reference',     // Absolute path refs
-        'empty tokens in $ref',                 // Empty tokens in pointer
-    ],
-    // Float division overflow edge case
-    'multipleOf.json' => [
-        'float division = inf',
-    ],
-    // Grapheme cluster handling - PHP strlen counts bytes, not grapheme clusters
-    'minLength.json' => [
-        'grapheme',
-    ],
-    'maxLength.json' => [
-        'grapheme',
-    ],
 ];
 
 $totalTests = 0;
@@ -76,6 +47,7 @@ $passedTests = 0;
 $failedTests = 0;
 $skippedTests = 0;
 $failures = [];
+$missingDrafts = [];
 
 /**
  * Convert stdClass objects to arrays recursively for schema.
@@ -95,17 +67,86 @@ function schemaToArray($schema) {
     return $schema;
 }
 
+function metaSchemaForDraft(string $draft): array {
+    $types = ['array', 'boolean', 'integer', 'null', 'number', 'object', 'string'];
+    $typeSchema = [
+        'anyOf' => [
+            ['enum' => $types],
+            [
+                'type' => 'array',
+                'items' => ['enum' => $types],
+                'minItems' => 1,
+                'uniqueItems' => true,
+            ],
+        ],
+    ];
+    $schema = [
+        'type' => ['object', 'boolean'],
+        'properties' => [
+            'type' => $typeSchema,
+            'minLength' => ['type' => 'integer', 'minimum' => 0],
+            'maxLength' => ['type' => 'integer', 'minimum' => 0],
+            'minItems' => ['type' => 'integer', 'minimum' => 0],
+            'maxItems' => ['type' => 'integer', 'minimum' => 0],
+            'minProperties' => ['type' => 'integer', 'minimum' => 0],
+            'maxProperties' => ['type' => 'integer', 'minimum' => 0],
+        ],
+        'additionalProperties' => true,
+    ];
+
+    return [
+        'type' => ['object', 'boolean'],
+        'properties' => [
+            'type' => $typeSchema,
+            'minLength' => ['type' => 'integer', 'minimum' => 0],
+            'maxLength' => ['type' => 'integer', 'minimum' => 0],
+            'minItems' => ['type' => 'integer', 'minimum' => 0],
+            'maxItems' => ['type' => 'integer', 'minimum' => 0],
+            'minProperties' => ['type' => 'integer', 'minimum' => 0],
+            'maxProperties' => ['type' => 'integer', 'minimum' => 0],
+            'definitions' => [
+                'type' => 'object',
+                'additionalProperties' => $schema,
+            ],
+        ],
+        'additionalProperties' => true,
+    ];
+}
+
+function resolveTestSuiteRemote(string $uri, string $baseUri, string $rawRef) {
+    global $remotesDir;
+
+    $documentUri = explode('#', $uri, 2)[0];
+    if (preg_match('#^http://json-schema\.org/draft-(04|06|07)/schema$#', $documentUri, $matches)) {
+        return metaSchemaForDraft('draft' . ltrim($matches[1], '0'));
+    }
+
+    $prefix = 'http://localhost:1234/';
+    if (!str_starts_with($documentUri, $prefix)) {
+        return null;
+    }
+
+    $relativePath = substr($documentUri, strlen($prefix));
+    $file = $remotesDir . '/' . $relativePath;
+    if (!is_file($file)) {
+        return null;
+    }
+
+    return schemaToArray(json_decode(file_get_contents($file)));
+}
+
 
 foreach ($drafts as $draft) {
     $draftDir = "$testSuiteDir/$draft";
     if (!is_dir($draftDir)) {
-        echo "Skipping $draft (directory not found)\n";
+        $missingDrafts[] = $draft;
+        echo "Missing $draft (directory not found)\n";
         continue;
     }
 
     echo "\n=== Testing $draft ===\n";
 
-    $files = glob("$draftDir/*.json");
+    $files = glob("$draftDir/*.json") ?: [];
     foreach ($files as $file) {
         $filename = basename($file);
 
@@ -167,7 +208,10 @@ foreach ($drafts as $draft) {
                 $data = $test->data;
                 $expectedValid = $test->valid;
 
-                $result = json_schema_validate($data, $schema);
+                $result = json_schema_validate($data, $schema, 1, [
+                    'resolver' => 'resolveTestSuiteRemote',
+                    'draft' => $draft,
+                ]);
 
                 if ($result === $expectedValid) {
                     $passedTests++;
@@ -194,6 +238,10 @@ echo "Total: $totalTests\n";
 echo "Passed: $passedTests\n";
 echo "Failed: $failedTests\n";
 echo "Skipped: $skippedTests\n";
+
+if ($missingDrafts !== []) {
+    echo "Missing drafts: " . implode(', ', $missingDrafts) . "\n";
+}
 
 if ($failedTests > 0) {
     $passRate = round(($passedTests / ($passedTests + $failedTests)) * 100, 1);
@@ -224,4 +272,12 @@ if ($failedTests > 0) {
 }
 
 echo "\n";
+if ($missingDrafts !== [] || $totalTests === 0) {
+    if ($totalTests === 0) {
+        fwrite(STDERR, "No JSON Schema Test Suite tests were executed.\n");
+        fwrite(STDERR, "Run: git submodule update --init --recursive\n");
+    }
+    exit(1);
+}
+
 exit($failedTests > 0 ? 1 : 0);

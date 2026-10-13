@@ -21,6 +21,12 @@
 /* Maximum $ref resolution stack for cycle detection */
 #define JSON_SCHEMA_MAX_REF_DEPTH 64
 
+/* Draft selection for id/$id handling */
+#define JSON_SCHEMA_DRAFT_AUTO 0
+#define JSON_SCHEMA_DRAFT_04   4
+#define JSON_SCHEMA_DRAFT_06   6
+#define JSON_SCHEMA_DRAFT_07   7
+
 /* ============================================================================
  * Data Structures
  * ========================================================================== */
@@ -64,6 +70,11 @@ typedef struct _json_schema_context {
     zval ref_resolver;                   /* PHP callback for external refs */
     zend_string *base_uri;               /* Base URI for relative refs */
     HashTable *resolved_schemas;         /* Cache of resolved external schemas */
+
+    /* Draft and $ref registry */
+    int draft;                           /* Draft mode for id/$id semantics */
+    HashTable *schema_base_uris;         /* schema zval pointer -> base URI */
+    HashTable *schema_uri_map;           /* canonical URI/anchor -> schema zval pointer */
 } json_schema_context;
 
 /* ============================================================================
@@ -118,8 +129,8 @@ int json_schema_validate_if_then_else(zval *data, zval *if_schema, zval *then_sc
  * $ref resolution
  * ========================================================================== */
 
-int json_schema_validate_ref(zval *data, zend_string *ref, json_schema_context *ctx);
-zval *json_schema_resolve_ref(zend_string *ref, json_schema_context *ctx);
+int json_schema_validate_ref(zval *data, zend_string *ref, zval *ref_schema, json_schema_context *ctx);
+zval *json_schema_resolve_ref(zend_string *ref, zval *ref_schema, json_schema_context *ctx);
 
 /* ============================================================================
  * Context management
@@ -138,6 +149,7 @@ void json_schema_context_pop_path(json_schema_context *ctx);
 /* External $ref resolver */
 void json_schema_context_set_resolver(json_schema_context *ctx, zval *resolver);
 void json_schema_context_set_base_uri(json_schema_context *ctx, zend_string *base_uri);
+void json_schema_context_set_draft(json_schema_context *ctx, zend_string *draft);
 
 /* ============================================================================
  * Utility functions
