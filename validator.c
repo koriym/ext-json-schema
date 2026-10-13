@@ -965,12 +965,14 @@ static zend_ulong json_schema_value_hash(zval *val, int depth, int *too_deep)
         case IS_FALSE:
             return hash;
         case IS_LONG:
-            return hash ^ (zend_ulong)Z_LVAL_P(val);
         case IS_DOUBLE: {
-            /* Hash the double's bit representation */
-            union { double d; zend_ulong u; } u;
-            u.d = Z_DVAL_P(val);
-            return hash ^ u.u;
+            /* Numbers compare by their double value, so 1, 1.0 and -0.0, 0 must hash alike */
+            union { double d; uint64_t u; } u;
+            u.d = (Z_TYPE_P(val) == IS_LONG) ? (double)Z_LVAL_P(val) : Z_DVAL_P(val);
+            if (u.d == 0) {
+                u.d = 0;
+            }
+            return mix_hash(IS_DOUBLE ^ u.u);
         }
         case IS_STRING:
             return hash ^ ZSTR_HASH(Z_STR_P(val));
