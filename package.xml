@@ -30,7 +30,7 @@ Initial beta release.
 - Circular reference detection and recursion depth limits
 - RFC 6901 compliant JSON Pointer handling
 - Procedural API: json_schema_validate(), json_schema_get_errors()
-- OOP API: JsonSchema\Validator class
+- OOP API: JsonSchema\Ext\Validator class
  </notes>
  <contents>
   <dir name="/">
@@ -58,6 +58,14 @@ Initial beta release.
     <file name="013-constraint-constants.phpt" role="test" />
     <file name="014-procedural-api.phpt" role="test" />
     <file name="015-boolean-schema.phpt" role="test" />
+    <file name="016-external-ref.phpt" role="test" />
+    <file name="017-resolver-edge-cases.phpt" role="test" />
+    <file name="018-ref-advanced.phpt" role="test" />
+    <file name="019-object-schema.phpt" role="test" />
+    <file name="020-invalid-schema.phpt" role="test" />
+    <file name="021-utf8-truncated.phpt" role="test" />
+    <file name="022-deep-value-compare.phpt" role="test" />
+    <file name="023-numeric-member-compare.phpt" role="test" />
    </dir>
   </dir>
  </contents>

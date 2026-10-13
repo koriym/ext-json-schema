@@ -19,6 +19,10 @@ var_dump(json_schema_validate([1, 2, 3, 4], $schema)); // false
 $schema = ['type' => 'array', 'uniqueItems' => true];
 var_dump(json_schema_validate([1, 2, 3], $schema)); // true
 var_dump(json_schema_validate([1, 2, 2], $schema)); // false
+var_dump(json_schema_validate([1, 1.0], $schema)); // false
+var_dump(json_schema_validate([['a' => 1], ['a' => 1.0]], $schema)); // false
+var_dump(json_schema_validate([0.0, -0.0], $schema)); // false
+var_dump(json_schema_validate([1, 1.5], $schema)); // true
 
 // Test items schema
 $schema = [
@@ -37,6 +41,10 @@ bool(true)
 bool(false)
 bool(true)
 bool(false)
+bool(false)
+bool(false)
+bool(false)
+bool(true)
 bool(true)
 bool(false)
 OK

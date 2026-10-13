@@ -3,7 +3,7 @@
  * JSON Schema Validator - Smoke Test
  */
 
-use JsonSchema\Validator;
+use JsonSchema\Ext\Validator;
 use JsonSchema\Constraint;
 
 echo "=== JSON Schema Validator Extension ===\n\n";

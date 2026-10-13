@@ -5,7 +5,7 @@ json_schema
 --FILE--
 <?php
 
-$validator = new JsonSchema\Validator();
+$validator = new JsonSchema\Ext\Validator();
 
 // Test 1: Resolver returning null
 echo "Test 1: Resolver returning null\n";
@@ -33,13 +33,21 @@ $validator->setRefResolver(function(string $uri, string $baseUri) {
 $result = $validator->validate($data, $schema);
 echo "Integer return handled: " . (!$result ? "PASS" : "FAIL") . "\n";
 
-// Test 4: Resolver returning invalid non-array value (boolean)
+// Test 4: Resolver returning a boolean schema
 echo "\nTest 4: Resolver returning boolean\n";
 $validator->setRefResolver(function(string $uri, string $baseUri) {
     return true;
 });
-$result = $validator->validate($data, $schema);
-echo "Boolean schema accepted: " . ($result ? "PASS" : "FAIL") . "\n";
+echo "True schema accepts: " . ($validator->validate($data, $schema) ? "PASS" : "FAIL") . "\n";
+$validator->setRefResolver(function(string $uri, string $baseUri) {
+    return false;
+});
+echo "False schema rejects: " . (!$validator->validate($data, $schema) ? "PASS" : "FAIL") . "\n";
+echo "Error: " . $validator->getErrors()[0]['message'] . "\n";
+$validator->setRefResolver(function(string $uri, string $baseUri) {
+    return true;
+});
+echo "Fragment into boolean unresolved: " . (!$validator->validate($data, ['$ref' => 'x.json#/a']) ? "PASS" : "FAIL") . "\n";
 
 // Test 5: Resolver throwing exception
 echo "\nTest 5: Resolver throwing exception\n";
@@ -104,7 +112,10 @@ Test 3: Resolver returning integer
 Integer return handled: PASS
 
 Test 4: Resolver returning boolean
-Boolean schema accepted: PASS
+True schema accepts: PASS
+False schema rejects: PASS
+Error: Schema is false, validation always fails
+Fragment into boolean unresolved: PASS
 
 Test 5: Resolver throwing exception
 Exception propagated: Resolver error

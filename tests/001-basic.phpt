@@ -18,7 +18,7 @@ $schema = [
 $validData = ['name' => 'John', 'age' => 30];
 $invalidData = ['age' => 30];
 
-$validator = new JsonSchema\Validator();
+$validator = new JsonSchema\Ext\Validator();
 
 // Test valid data
 $validator->validate($validData, $schema);

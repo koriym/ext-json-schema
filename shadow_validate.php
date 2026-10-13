@@ -7,8 +7,7 @@ declare(strict_types=1);
  *
  * Compares ext-json-schema against the pure PHP justinrainbow/json-schema validator
  * for representative schema/data fixtures. The runner executes each engine in a
- * separate PHP process so the PECL JsonSchema\Validator class does not shadow the
- * pure PHP JsonSchema\Validator class.
+ * separate PHP process so the pure PHP engine runs without the extension loaded.
  *
  * Usage:
  *   php shadow_validate.php [fixture-file-or-directory ...]

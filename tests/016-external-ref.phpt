@@ -46,7 +46,7 @@ $externalSchemas = [
     ]
 ];
 
-$validator = new JsonSchema\Validator();
+$validator = new JsonSchema\Ext\Validator();
 
 // Set up resolver callback
 $validator->setRefResolver(function(string $uri, string $baseUri) use ($externalSchemas) {
@@ -92,7 +92,7 @@ echo "Zero count rejected: " . (!$result ? "PASS" : "FAIL") . "\n";
 
 // Test 4: Without resolver, external refs should fail
 echo "\nTest 4: Without resolver\n";
-$validator2 = new JsonSchema\Validator();
+$validator2 = new JsonSchema\Ext\Validator();
 $schema = ['$ref' => 'user.json'];
 $data = ['name' => 'John', 'age' => 30];
 $result = $validator2->validate($data, $schema);
@@ -114,7 +114,7 @@ $validator->validate($data, $schema);
 
 // Test 6: Relative path resolution (./foo.json, ../bar.json)
 echo "\nTest 6: Relative path resolution\n";
-$validator3 = new JsonSchema\Validator();
+$validator3 = new JsonSchema\Ext\Validator();
 $validator3->setBaseUri('/schemas/v1/models/');
 $validator3->setRefResolver(function(string $uri, string $baseUri) use ($externalSchemas) {
     // Resolve relative paths

@@ -27,6 +27,9 @@
 #define JSON_SCHEMA_DRAFT_06   6
 #define JSON_SCHEMA_DRAFT_07   7
 
+/* Maximum container nesting compared by enum, const and uniqueItems (json_decode's default depth) */
+#define JSON_SCHEMA_MAX_COMPARE_DEPTH 512
+
 /* ============================================================================
  * Data Structures
  * ========================================================================== */
@@ -75,6 +78,11 @@ typedef struct _json_schema_context {
     int draft;                           /* Draft mode for id/$id semantics */
     HashTable *schema_base_uris;         /* schema zval pointer -> base URI */
     HashTable *schema_uri_map;           /* canonical URI/anchor -> schema zval pointer */
+
+    zval schema_copy;                    /* Array-only copy of the root schema; owns ctx->root_schema when set */
+
+    /* First error that fails the validation regardless of combinators, which truncate the error list */
+    json_schema_error *fatal_error;
 } json_schema_context;
 
 /* ============================================================================
@@ -156,7 +164,8 @@ void json_schema_context_set_draft(json_schema_context *ctx, zend_string *draft)
  * ========================================================================== */
 
 int json_schema_is_type(zval *data, const char *type);
-int json_schema_values_equal(zval *a, zval *b);
+/* Returns 1 if equal, 0 if not, -1 if nesting exceeds JSON_SCHEMA_MAX_COMPARE_DEPTH */
+int json_schema_values_equal(zval *a, zval *b, int depth);
 zend_string *json_schema_get_type_name(zval *data);
 int json_schema_coerce_type(zval *data, const char *target_type);
 
