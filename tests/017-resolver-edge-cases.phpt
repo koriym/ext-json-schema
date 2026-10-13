@@ -91,10 +91,10 @@ $schema = ['$ref' => 'external.json'];
 $result = $validator->validate($data, $schema);
 echo "Cleared resolver handled: " . (!$result ? "PASS" : "FAIL") . "\n";
 
-// Test 8: $ref into a document resolved before eight others
+// Test 8: $ref into the first of many resolved documents
 echo "\nTest 8: Ref into an earlier of many documents\n";
 $props = [];
-foreach (range('a', 'i') as $name) {
+foreach (range('a', 'p') as $name) {
     $props[$name] = ['$ref' => "$name.json"];
 }
 $props['back'] = ['$ref' => 'a.json#/definitions/n'];
