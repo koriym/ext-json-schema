@@ -91,6 +91,19 @@ $schema = ['$ref' => 'external.json'];
 $result = $validator->validate($data, $schema);
 echo "Cleared resolver handled: " . (!$result ? "PASS" : "FAIL") . "\n";
 
+// Test 8: $ref into a document resolved before eight others
+echo "\nTest 8: Ref into an earlier of many documents\n";
+$props = [];
+foreach (range('a', 'i') as $name) {
+    $props[$name] = ['$ref' => "$name.json"];
+}
+$props['back'] = ['$ref' => 'a.json#/definitions/n'];
+$options = ['resolver' => fn(string $uri) => ['definitions' => ['n' => ['type' => 'integer']]]];
+$data = array_fill_keys(array_keys($props), 1);
+echo "Valid data: " . (json_schema_validate($data, ['properties' => $props], 1, $options) ? "PASS" : "FAIL") . "\n";
+$data['back'] = 'x';
+echo "Invalid data rejected: " . (!json_schema_validate($data, ['properties' => $props], 1, $options) ? "PASS" : "FAIL") . "\n";
+
 echo "\nAll edge case tests completed!\n";
 ?>
 --EXPECT--
@@ -115,5 +128,9 @@ Invalid type rejected: PASS
 
 Test 7: Clear resolver with null
 Cleared resolver handled: PASS
+
+Test 8: Ref into an earlier of many documents
+Valid data: PASS
+Invalid data rejected: PASS
 
 All edge case tests completed!
