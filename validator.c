@@ -2146,6 +2146,22 @@ static void json_schema_context_index_schema(json_schema_context *ctx, zval *sch
     zend_string_release(current_base);
 }
 
+static void resolved_schema_dtor(zval *zv)
+{
+    zval *schema = Z_PTR_P(zv);
+    zval_ptr_dtor(schema);
+    efree(schema);
+}
+
+/* Each document lives in its own allocation because the registry keeps pointers to it, which a rehash would invalidate */
+static zval *store_resolved_schema(json_schema_context *ctx, zend_string *doc_uri, zval *schema)
+{
+    zval *stored = emalloc(sizeof(zval));
+    ZVAL_COPY_VALUE(stored, schema);
+    zend_hash_update_ptr(ctx->resolved_schemas, doc_uri, stored);
+    return stored;
+}
+
 static zval *json_schema_resolver_fetch(json_schema_context *ctx, zend_string *doc_uri, zend_string *source_base, zend_string *raw_ref)
 {
     if (Z_TYPE(ctx->ref_resolver) == IS_UNDEF) {
@@ -2154,10 +2170,10 @@ static zval *json_schema_resolver_fetch(json_schema_context *ctx, zend_string *d
 
     if (!ctx->resolved_schemas) {
         ALLOC_HASHTABLE(ctx->resolved_schemas);
-        zend_hash_init(ctx->resolved_schemas, 8, NULL, ZVAL_PTR_DTOR, 0);
+        zend_hash_init(ctx->resolved_schemas, 8, NULL, resolved_schema_dtor, 0);
     }
 
-    zval *cached = zend_hash_find(ctx->resolved_schemas, doc_uri);
+    zval *cached = zend_hash_find_ptr(ctx->resolved_schemas, doc_uri);
     if (cached) {
         return cached;
     }
@@ -2187,13 +2203,11 @@ static zval *json_schema_resolver_fetch(json_schema_context *ctx, zend_string *d
                 zval normalized;
                 schema_value_to_array(&retval, &normalized, 0);
                 zval_ptr_dtor(&retval);
-                zend_hash_update(ctx->resolved_schemas, doc_uri, &normalized);
-                external_schema = zend_hash_find(ctx->resolved_schemas, doc_uri);
+                external_schema = store_resolved_schema(ctx, doc_uri, &normalized);
                 json_schema_context_index_schema(ctx, external_schema, doc_uri, 1, 0);
                 ZVAL_UNDEF(&retval);
             } else if (Z_TYPE(retval) == IS_TRUE || Z_TYPE(retval) == IS_FALSE) {
-                zend_hash_update(ctx->resolved_schemas, doc_uri, &retval);
-                external_schema = zend_hash_find(ctx->resolved_schemas, doc_uri);
+                external_schema = store_resolved_schema(ctx, doc_uri, &retval);
                 json_schema_context_index_schema(ctx, external_schema, doc_uri, 1, 0);
                 ZVAL_UNDEF(&retval);
             } else if (!Z_ISUNDEF(retval)) {
